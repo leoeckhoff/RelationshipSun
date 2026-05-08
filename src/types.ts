@@ -18,6 +18,21 @@ export const STATES: State[] = [
 
 export const ALL_STATES: State[] = ["UNSET", ...STATES];
 
+export const STATE_CYCLE: State[] = [
+  "UNSET",
+  "HAVE_LIKE",
+  "HAVE_CHANGE",
+  "HARD_NO",
+  "WANT",
+  "UNSURE",
+  "WISHFUL",
+];
+
+export function nextState(s: State): State {
+  const i = STATE_CYCLE.indexOf(s);
+  return STATE_CYCLE[(i + 1) % STATE_CYCLE.length];
+}
+
 export interface NodeRecord {
   uuid: string;
   parentUuid: string;

@@ -28,6 +28,7 @@ interface AppState {
   pendingDelete: string | null;
   pendingAddChild: string | null;
   activeFilter: Set<State>;
+  sunburstFocus: string;
 
   setView: (v: View) => void;
   selectNode: (uuid: string | null) => void;
@@ -48,6 +49,7 @@ interface AppState {
   clearPartner: () => void;
   toggleFilter: (state: State) => void;
   resetFilter: () => void;
+  setSunburstFocus: (uuid: string) => void;
 }
 
 function uuid(): string {
@@ -95,6 +97,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   pendingDelete: null,
   pendingAddChild: null,
   activeFilter: new Set(ALL_STATES),
+  sunburstFocus: SEED_ROOT_UUID,
 
   setView: (v) => set({ view: v }),
 
@@ -200,6 +203,8 @@ export const useAppStore = create<AppState>((set, get) => ({
   },
 
   resetFilter: () => set({ activeFilter: new Set(ALL_STATES) }),
+
+  setSunburstFocus: (uuid) => set({ sunburstFocus: uuid }),
 }));
 
 export function useNodeMap(): Map<string, NodeRecord> {

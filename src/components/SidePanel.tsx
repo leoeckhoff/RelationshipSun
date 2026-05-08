@@ -10,6 +10,8 @@ export function SidePanel() {
   const requestDelete = useAppStore((s) => s.requestDelete);
   const openAddChild = useAppStore((s) => s.openAddChild);
   const selectNode = useAppStore((s) => s.selectNode);
+  const setSunburstFocus = useAppStore((s) => s.setSunburstFocus);
+  const setView = useAppStore((s) => s.setView);
 
   const nodeMap = useNodeMap();
   const childrenIdx = useChildrenIndex();
@@ -103,6 +105,18 @@ export function SidePanel() {
         <button className="btn" onClick={() => openAddChild(node.uuid)}>
           + Add sub-item
         </button>
+        {children.length > 0 && (
+          <button
+            className="btn"
+            onClick={() => {
+              setSunburstFocus(node.uuid);
+              setView("sunburst");
+            }}
+            title="Open this subtree as the sunburst's focus"
+          >
+            ↓ Zoom into here
+          </button>
+        )}
         {!isRoot && (
           <button
             className="btn danger"

@@ -1,4 +1,5 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
+
 import {
   hierarchy as d3hierarchy,
   partition as d3partition,
@@ -6,7 +7,7 @@ import {
 } from "d3-hierarchy";
 import { arc as d3arc } from "d3-shape";
 import { useAppStore, useNodeMap } from "../../store";
-import { STATE_COLOR, type NodeRecord } from "../../types";
+import { STATE_COLOR, nextState, type NodeRecord } from "../../types";
 import { humanize } from "../../util";
 
 type TreeNode = NodeRecord & { children?: TreeNode[] };
@@ -27,24 +28,39 @@ function buildTree(nodes: NodeRecord[], rootUuid: string): TreeNode | null {
   return walk(root);
 }
 
-const SIZE = 720;
-const RADIUS = SIZE / 2 - 4;
+const RADIUS = 320;
+const MARGIN = 90; // room for label overflow
+const VIEW = (RADIUS + MARGIN) * 2;
+const DRAG_THRESHOLD_RAD = 0.02;
+const DOUBLE_CLICK_MS = 260;
 
 export function Sunburst() {
   const nodes = useAppStore((s) => s.nodes);
   const appRoot = useAppStore((s) => s.rootUuid);
   const selectNode = useAppStore((s) => s.selectNode);
+  const setNodeState = useAppStore((s) => s.setNodeState);
   const selectedUuid = useAppStore((s) => s.selectedUuid);
   const activeFilter = useAppStore((s) => s.activeFilter);
+  const focusUuid = useAppStore((s) => s.sunburstFocus);
+  const setFocusUuid = useAppStore((s) => s.setSunburstFocus);
   const nodeMap = useNodeMap();
 
-  const [focusUuid, setFocusUuid] = useState(appRoot);
+  const [rotation, setRotation] = useState(0);
+  const svgRef = useRef<SVGSVGElement | null>(null);
+  const dragRef = useRef<{
+    startMouseAngle: number;
+    startRotation: number;
+    dragged: boolean;
+    pointerId: number;
+  } | null>(null);
+  const wasDragged = useRef(false);
+  const clickTimer = useRef<number | null>(null);
 
   useEffect(() => {
     if (!nodes.some((n) => n.uuid === focusUuid)) {
       setFocusUuid(appRoot);
     }
-  }, [nodes, focusUuid, appRoot]);
+  }, [nodes, focusUuid, appRoot, setFocusUuid]);
 
   const focusNode = nodeMap.get(focusUuid);
 
@@ -75,97 +91,236 @@ export function Sunburst() {
     ? nodeMap.get(focusNode.parentUuid)
     : null;
 
-  const breadcrumb: string[] = [];
-  let cursor: NodeRecord | undefined = focusNode;
-  while (cursor) {
-    breadcrumb.unshift(humanize(cursor.key));
-    cursor = cursor.parentUuid ? nodeMap.get(cursor.parentUuid) : undefined;
+  const breadcrumb: NodeRecord[] = [];
+  {
+    let cursor: NodeRecord | undefined = focusNode;
+    while (cursor) {
+      breadcrumb.unshift(cursor);
+      cursor = cursor.parentUuid ? nodeMap.get(cursor.parentUuid) : undefined;
+    }
   }
+
+  function getMouseAngle(clientX: number, clientY: number): number | null {
+    if (!svgRef.current) return null;
+    const r = svgRef.current.getBoundingClientRect();
+    const cx = r.left + r.width / 2;
+    const cy = r.top + r.height / 2;
+    return Math.atan2(clientY - cy, clientX - cx);
+  }
+
+  function onPointerDown(e: React.PointerEvent<SVGSVGElement>) {
+    if (e.button !== 0) return;
+    const angle = getMouseAngle(e.clientX, e.clientY);
+    if (angle === null) return;
+    dragRef.current = {
+      startMouseAngle: angle,
+      startRotation: rotation,
+      dragged: false,
+      pointerId: e.pointerId,
+    };
+    svgRef.current?.setPointerCapture(e.pointerId);
+  }
+
+  function onPointerMove(e: React.PointerEvent<SVGSVGElement>) {
+    const drag = dragRef.current;
+    if (!drag || drag.pointerId !== e.pointerId) return;
+    const angle = getMouseAngle(e.clientX, e.clientY);
+    if (angle === null) return;
+    let delta = angle - drag.startMouseAngle;
+    // wrap to [-π, π] so single drags rotate sensibly across the angle seam
+    if (delta > Math.PI) delta -= 2 * Math.PI;
+    if (delta < -Math.PI) delta += 2 * Math.PI;
+    if (Math.abs(delta) > DRAG_THRESHOLD_RAD) drag.dragged = true;
+    setRotation(drag.startRotation + delta);
+  }
+
+  function onPointerUp(e: React.PointerEvent<SVGSVGElement>) {
+    const drag = dragRef.current;
+    if (drag && drag.pointerId === e.pointerId) {
+      if (drag.dragged) wasDragged.current = true;
+      dragRef.current = null;
+      svgRef.current?.releasePointerCapture(e.pointerId);
+    }
+  }
+
+  function consumeDragFlag(): boolean {
+    if (wasDragged.current) {
+      wasDragged.current = false;
+      return true;
+    }
+    return false;
+  }
+
+  function handleArcClick(d: HierarchyRectangularNode<TreeNode>, isFocus: boolean) {
+    if (consumeDragFlag()) return;
+
+    if (isFocus) {
+      // Center: zoom out one level.
+      if (clickTimer.current !== null) {
+        window.clearTimeout(clickTimer.current);
+        clickTimer.current = null;
+      }
+      if (focusParent) setFocusUuid(focusParent.uuid);
+      selectNode(focusUuid);
+      return;
+    }
+
+    // Defer single-click so we can detect double-click as "clear".
+    if (clickTimer.current !== null) {
+      window.clearTimeout(clickTimer.current);
+      clickTimer.current = null;
+      selectNode(d.data.uuid);
+      setNodeState(d.data.uuid, "UNSET");
+      return;
+    }
+    const uuid = d.data.uuid;
+    const state = d.data.state;
+    clickTimer.current = window.setTimeout(() => {
+      clickTimer.current = null;
+      selectNode(uuid);
+      setNodeState(uuid, nextState(state));
+    }, DOUBLE_CLICK_MS);
+  }
+
+  const rotationDeg = (rotation * 180) / Math.PI;
 
   return (
     <div className="sunburst-wrap">
       <div className="sunburst-breadcrumb">
-        {breadcrumb.length > 1
-          ? breadcrumb.join(" › ")
-          : "Click a segment to rate it. Click an inner ring to zoom in. Tap the center to zoom out."}
+        {breadcrumb.length > 1 ? (
+          breadcrumb.map((n, i) => (
+            <span key={n.uuid}>
+              {i > 0 && <span className="crumb-sep"> › </span>}
+              <button
+                className="crumb"
+                onClick={() => {
+                  if (i < breadcrumb.length - 1) setFocusUuid(n.uuid);
+                  selectNode(n.uuid);
+                }}
+                disabled={i === breadcrumb.length - 1}
+              >
+                {humanize(n.key)}
+              </button>
+            </span>
+          ))
+        ) : (
+          <span>
+            Click to cycle ratings. Double-click to clear. Drag to rotate. Tap
+            the center to zoom out.
+          </span>
+        )}
       </div>
-      <svg viewBox={`-${RADIUS + 4} -${RADIUS + 4} ${SIZE} ${SIZE}`}>
-        {allNodes.map((d) => {
-          const isFocus = d.depth === 0;
-          const isLeaf = !d.children || d.children.length === 0;
-          const angle = d.x1 - d.x0;
-          const arcPath = arcGen(d) ?? "";
-          const midR = ((d.y0 + d.y1) / 2) * ringWidth;
-          const arcLen = angle * Math.max(midR, 1);
-          const showLabel = !isFocus && arcLen > 28;
-          const midAngle = (d.x0 + d.x1) / 2;
-          const lx = Math.sin(midAngle) * midR;
-          const ly = -Math.cos(midAngle) * midR;
-          let rotate = (midAngle * 180) / Math.PI - 90;
-          if (rotate > 90) rotate -= 180;
-          if (rotate < -90) rotate += 180;
-          const fill = isFocus ? "#222" : STATE_COLOR[d.data.state];
-          const dimmed = !isFocus && !activeFilter.has(d.data.state);
+      <svg
+        ref={svgRef}
+        viewBox={`${-VIEW / 2} ${-VIEW / 2} ${VIEW} ${VIEW}`}
+        onPointerDown={onPointerDown}
+        onPointerMove={onPointerMove}
+        onPointerUp={onPointerUp}
+        onPointerCancel={onPointerUp}
+        style={{ touchAction: "none" }}
+      >
+        <g
+          className={dragRef.current ? "spinning" : "spinnable"}
+          transform={`rotate(${rotationDeg.toFixed(3)})`}
+        >
+          {allNodes.map((d) => {
+            const isFocus = d.depth === 0;
+            const arcPath = arcGen(d) ?? "";
+            const fill = isFocus ? "#222" : STATE_COLOR[d.data.state];
+            const dimmed = !isFocus && !activeFilter.has(d.data.state);
+            const midAngle = (d.x0 + d.x1) / 2;
+            const ringHeight = (d.y1 - d.y0) * ringWidth;
 
-          return (
-            <g key={d.data.uuid} style={{ opacity: dimmed ? 0.18 : 1 }}>
-              <path
-                d={arcPath}
-                fill={fill}
-                className={`sunburst-arc ${
-                  !isLeaf || isFocus ? "clickable" : ""
-                }`}
+            // Effective on-screen angle = midAngle + rotation, normalized [0, 2π)
+            const eff =
+              ((midAngle + rotation) % (2 * Math.PI) + 2 * Math.PI) %
+              (2 * Math.PI);
+            const flip = eff > Math.PI / 2 && eff < (3 * Math.PI) / 2;
+
+            const baseTextRot = (midAngle * 180) / Math.PI - 90;
+            const textRot = flip ? baseTextRot + 180 : baseTextRot;
+
+            // Anchor at inner edge if not flipped, outer edge if flipped.
+            const padIn = 4;
+            const padOut = 4;
+            const anchorR = flip
+              ? d.y1 * ringWidth - padOut
+              : d.y0 * ringWidth + padIn;
+            const lx = Math.sin(midAngle) * anchorR;
+            const ly = -Math.cos(midAngle) * anchorR;
+
+            // Font size shrinks with depth so the deep rings don't smear.
+            const fontSize = isFocus
+              ? 14
+              : d.depth >= 4
+                ? 7
+                : d.depth === 3
+                  ? 8
+                  : d.depth === 2
+                    ? 9
+                    : 10;
+
+            return (
+              <g
+                key={d.data.uuid}
+                style={{ opacity: dimmed ? 0.18 : 1 }}
                 onClick={(e) => {
                   e.stopPropagation();
-                  if (isFocus) {
-                    if (focusParent) setFocusUuid(focusParent.uuid);
-                    selectNode(focusUuid);
-                  } else {
-                    selectNode(d.data.uuid);
-                    if (!isLeaf) setFocusUuid(d.data.uuid);
-                  }
+                  handleArcClick(d, isFocus);
                 }}
               >
-                <title>
-                  {humanize(d.data.key)}
-                  {d.data.note ? ` — ${d.data.note}` : ""}
-                </title>
-              </path>
-              {showLabel && (
-                <text
-                  className="sunburst-label"
-                  transform={`translate(${lx},${ly}) rotate(${rotate})`}
-                >
-                  {humanize(d.data.key)}
-                </text>
-              )}
-              {isFocus && (
-                <text
-                  className="sunburst-label"
-                  style={{ fontSize: 14, fontWeight: 600 }}
-                >
-                  {focusParent ? "↑" : "•"}
-                </text>
-              )}
-            </g>
-          );
-        })}
-        {selectedUuid &&
-          allNodes.some((d) => d.data.uuid === selectedUuid) &&
-          (() => {
-            const d = allNodes.find((d) => d.data.uuid === selectedUuid)!;
-            if (d.depth === 0) return null;
-            return (
-              <path
-                d={arcGen(d) ?? ""}
-                fill="none"
-                stroke="white"
-                strokeWidth={2}
-                pointerEvents="none"
-              />
+                <path d={arcPath} fill={fill} className="sunburst-arc">
+                  <title>
+                    {humanize(d.data.key)}
+                    {d.data.note ? ` — ${d.data.note}` : ""}
+                  </title>
+                </path>
+                {!isFocus && ringHeight > 14 && (
+                  <text
+                    className="sunburst-label"
+                    transform={`translate(${lx},${ly}) rotate(${textRot})`}
+                    textAnchor="start"
+                    style={{ fontSize }}
+                    pointerEvents="none"
+                  >
+                    {humanize(d.data.key)}
+                  </text>
+                )}
+                {isFocus && (
+                  <text
+                    className="sunburst-label sunburst-center"
+                    style={{ fontSize: 16, fontWeight: 600 }}
+                    transform={`rotate(${(-rotationDeg).toFixed(3)})`}
+                    pointerEvents="none"
+                  >
+                    {focusParent ? "↑" : "·"}
+                  </text>
+                )}
+              </g>
             );
-          })()}
+          })}
+          {selectedUuid &&
+            allNodes.some((d) => d.data.uuid === selectedUuid) &&
+            (() => {
+              const d = allNodes.find((d) => d.data.uuid === selectedUuid)!;
+              if (d.depth === 0) return null;
+              return (
+                <path
+                  d={arcGen(d) ?? ""}
+                  fill="none"
+                  stroke="white"
+                  strokeWidth={2}
+                  pointerEvents="none"
+                />
+              );
+            })()}
+        </g>
       </svg>
+      {rotation !== 0 && (
+        <button className="btn ghost" onClick={() => setRotation(0)}>
+          ↺ Reset rotation
+        </button>
+      )}
     </div>
   );
 }

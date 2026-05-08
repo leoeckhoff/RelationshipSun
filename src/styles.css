@@ -458,17 +458,21 @@ button {
 }
 
 .sunburst-wrap svg {
-  width: min(720px, 92vmin);
-  height: min(720px, 92vmin);
-  cursor: default;
+  width: min(820px, 92vmin);
+  height: min(820px, 92vmin);
+}
+
+.sunburst-wrap svg .spinnable {
+  cursor: grab;
+}
+
+.sunburst-wrap svg .spinning {
+  cursor: grabbing;
 }
 
 .sunburst-arc {
   stroke: var(--bg);
   stroke-width: 1;
-}
-
-.sunburst-arc.clickable {
   cursor: pointer;
 }
 
@@ -477,21 +481,52 @@ button {
 }
 
 .sunburst-label {
-  font-size: 9px;
   fill: var(--text);
   pointer-events: none;
-  text-anchor: middle;
+  text-anchor: start;
   dominant-baseline: middle;
 }
 
-.sunburst-center-button {
-  cursor: pointer;
+.sunburst-label.sunburst-center {
+  text-anchor: middle;
+  dominant-baseline: middle;
 }
 
 .sunburst-breadcrumb {
   color: var(--text-dim);
   font-size: 13px;
   text-align: center;
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 0;
+  align-items: center;
+}
+
+.sunburst-breadcrumb .crumb {
+  background: transparent;
+  border: none;
+  color: var(--accent);
+  font-size: 13px;
+  padding: 2px 6px;
+  border-radius: 4px;
+  cursor: pointer;
+  font-family: inherit;
+}
+
+.sunburst-breadcrumb .crumb:hover:not(:disabled) {
+  background: var(--bg-elev-2);
+  text-decoration: underline;
+}
+
+.sunburst-breadcrumb .crumb:disabled {
+  color: var(--text);
+  cursor: default;
+  font-weight: 600;
+}
+
+.sunburst-breadcrumb .crumb-sep {
+  color: var(--text-dim);
 }
 
 /* Compare */
