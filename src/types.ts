@@ -1,0 +1,55 @@
+export type State = "UNSET" | "HAVE_LIKE" | "HAVE_CHANGE" | "HARD_NO" | "WANT";
+
+export const STATES: State[] = ["HAVE_LIKE", "HAVE_CHANGE", "HARD_NO", "WANT"];
+
+export interface NodeRecord {
+  uuid: string;
+  parentUuid: string;
+  key: string;
+  state: State;
+  note?: string;
+  custom?: boolean;
+}
+
+export interface Settings {
+  confirmDelete: boolean;
+}
+
+export interface ExportFile {
+  format: "relationship-sun";
+  version: 1;
+  name: string;
+  exportedAt: string;
+  nodes: NodeRecord[];
+}
+
+export interface ComparePartner {
+  name: string;
+  nodes: NodeRecord[];
+}
+
+export type View = "sunburst" | "tree" | "compare";
+
+export const STATE_COLOR: Record<State, string> = {
+  UNSET: "#3a3a3a",
+  HAVE_LIKE: "#22c55e",
+  HAVE_CHANGE: "#f59e0b",
+  HARD_NO: "#ef4444",
+  WANT: "#3b82f6",
+};
+
+export const STATE_LABEL: Record<State, string> = {
+  UNSET: "Not yet rated",
+  HAVE_LIKE: "Part of us — I like it",
+  HAVE_CHANGE: "Part of us — I'd like it different",
+  HARD_NO: "Absolute no",
+  WANT: "I'd appreciate this",
+};
+
+export const STATE_SHORT: Record<State, string> = {
+  UNSET: "—",
+  HAVE_LIKE: "Like",
+  HAVE_CHANGE: "Change",
+  HARD_NO: "Hard no",
+  WANT: "Want",
+};
