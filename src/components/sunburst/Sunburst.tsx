@@ -1,5 +1,4 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-
 import {
   hierarchy as d3hierarchy,
   partition as d3partition,
@@ -8,7 +7,7 @@ import {
 import { arc as d3arc } from "d3-shape";
 import { useAppStore, useNodeMap } from "../../store";
 import { STATE_COLOR, nextState, type NodeRecord } from "../../types";
-import { humanize } from "../../util";
+import { fitLabel, humanize } from "../../util";
 
 type TreeNode = NodeRecord & { children?: TreeNode[] };
 
@@ -28,11 +27,31 @@ function buildTree(nodes: NodeRecord[], rootUuid: string): TreeNode | null {
   return walk(root);
 }
 
-const RADIUS = 320;
+const RADIUS = 360;
 const MARGIN = 90; // room for label overflow
 const VIEW = (RADIUS + MARGIN) * 2;
 const DRAG_THRESHOLD_RAD = 0.02;
 const DOUBLE_CLICK_MS = 260;
+const MIN_SCALE = 0.6;
+const MAX_SCALE = 3;
+
+interface RenderItem {
+  uuid: string;
+  isFocus: boolean;
+  isLeaf: boolean;
+  arcPath: string;
+  fill: string;
+  dimmed: boolean;
+  showLabel: boolean;
+  label: string;
+  fullLabel: string;
+  note: string | undefined;
+  lx: number;
+  ly: number;
+  textRot: number;
+  fontSize: number;
+  d: HierarchyRectangularNode<TreeNode>;
+}
 
 export function Sunburst() {
   const nodes = useAppStore((s) => s.nodes);
@@ -46,7 +65,10 @@ export function Sunburst() {
   const nodeMap = useNodeMap();
 
   const [rotation, setRotation] = useState(0);
+  const [scale, setScale] = useState(1);
+  const [containerSize, setContainerSize] = useState({ w: 600, h: 600 });
   const svgRef = useRef<SVGSVGElement | null>(null);
+  const scrollRef = useRef<HTMLDivElement | null>(null);
   const dragRef = useRef<{
     startMouseAngle: number;
     startRotation: number;
@@ -62,6 +84,19 @@ export function Sunburst() {
     }
   }, [nodes, focusUuid, appRoot, setFocusUuid]);
 
+  useEffect(() => {
+    const el = scrollRef.current;
+    if (!el) return;
+    const update = () => {
+      const r = el.getBoundingClientRect();
+      setContainerSize({ w: r.width, h: r.height });
+    };
+    update();
+    const obs = new ResizeObserver(update);
+    obs.observe(el);
+    return () => obs.disconnect();
+  }, []);
+
   const focusNode = nodeMap.get(focusUuid);
 
   const partitionData = useMemo(() => {
@@ -71,22 +106,86 @@ export function Sunburst() {
     return d3partition<TreeNode>().size([2 * Math.PI, root.height + 1])(root);
   }, [nodes, focusUuid]);
 
+  const renderItems: RenderItem[] = useMemo(() => {
+    if (!partitionData) return [];
+    const totalDepth = (partitionData.height ?? 0) + 1;
+    const ringWidth = RADIUS / totalDepth;
+
+    const arcGen = d3arc<HierarchyRectangularNode<TreeNode>>()
+      .startAngle((d) => d.x0)
+      .endAngle((d) => d.x1)
+      .padAngle((d) => Math.min((d.x1 - d.x0) / 2, 0.004))
+      .padRadius(RADIUS * 1.5)
+      .innerRadius((d) => Math.max(d.y0 * ringWidth, 0))
+      .outerRadius((d) => Math.max(d.y0 * ringWidth, d.y1 * ringWidth - 1));
+
+    return partitionData.descendants().map((d) => {
+      const isFocus = d.depth === 0;
+      const isLeaf = !d.children || d.children.length === 0;
+      const arcPath = arcGen(d) ?? "";
+      const fill = isFocus
+        ? "var(--bg-elev-2)"
+        : STATE_COLOR[d.data.state];
+      const dimmed = !isFocus && !activeFilter.has(d.data.state);
+
+      const midAngle = (d.x0 + d.x1) / 2;
+      const ringHeight = (d.y1 - d.y0) * ringWidth;
+      const eff =
+        ((midAngle + rotation) % (2 * Math.PI) + 2 * Math.PI) %
+        (2 * Math.PI);
+      // Flip when the label sits on the left half of the wheel — transitions
+      // happen at 12 o'clock and 6 o'clock (the vertical axis).
+      const flip = eff >= Math.PI;
+
+      const baseTextRot = (midAngle * 180) / Math.PI - 90;
+      const textRot = flip ? baseTextRot + 180 : baseTextRot;
+
+      const anchorR = ((d.y0 + d.y1) / 2) * ringWidth;
+      const lx = Math.sin(midAngle) * anchorR;
+      const ly = -Math.cos(midAngle) * anchorR;
+
+      const fontSize = isFocus
+        ? 14
+        : d.depth >= 4
+          ? 7
+          : d.depth === 3
+            ? 8
+            : d.depth === 2
+              ? 9
+              : 10;
+
+      const fullLabel = humanize(d.data.key);
+      // Allow a bit of overflow past the ring height so labels aren't clipped
+      // too aggressively, but cap with an ellipsis for very long names.
+      const label = isFocus
+        ? fullLabel
+        : fitLabel(fullLabel, ringHeight * 1.4, fontSize);
+      const showLabel = !isFocus && ringHeight > 14 && label.length > 0;
+
+      return {
+        uuid: d.data.uuid,
+        isFocus,
+        isLeaf,
+        arcPath,
+        fill,
+        dimmed,
+        showLabel,
+        label,
+        fullLabel,
+        note: d.data.note,
+        lx,
+        ly,
+        textRot,
+        fontSize,
+        d,
+      };
+    });
+  }, [partitionData, activeFilter, rotation]);
+
   if (!partitionData || !focusNode) {
     return <div className="empty-state">No data — try resetting in Settings.</div>;
   }
 
-  const totalDepth = (partitionData.height ?? 0) + 1;
-  const ringWidth = RADIUS / totalDepth;
-
-  const arcGen = d3arc<HierarchyRectangularNode<TreeNode>>()
-    .startAngle((d) => d.x0)
-    .endAngle((d) => d.x1)
-    .padAngle((d) => Math.min((d.x1 - d.x0) / 2, 0.004))
-    .padRadius(RADIUS * 1.5)
-    .innerRadius((d) => Math.max(d.y0 * ringWidth, 0))
-    .outerRadius((d) => Math.max(d.y0 * ringWidth, d.y1 * ringWidth - 1));
-
-  const allNodes = partitionData.descendants();
   const focusParent = focusNode.parentUuid
     ? nodeMap.get(focusNode.parentUuid)
     : null;
@@ -118,9 +217,6 @@ export function Sunburst() {
       dragged: false,
       pointerId: e.pointerId,
     };
-    // Don't capture yet — capturing reroutes the upcoming click event from
-    // the arc to the SVG, which kills the rate-on-click handler. We only
-    // capture once we've actually detected a drag.
   }
 
   function onPointerMove(e: React.PointerEvent<SVGSVGElement>) {
@@ -129,18 +225,15 @@ export function Sunburst() {
     const angle = getMouseAngle(e.clientX, e.clientY);
     if (angle === null) return;
     let delta = angle - drag.startMouseAngle;
-    // wrap to [-π, π] so single drags rotate sensibly across the angle seam
     if (delta > Math.PI) delta -= 2 * Math.PI;
     if (delta < -Math.PI) delta += 2 * Math.PI;
     if (Math.abs(delta) > DRAG_THRESHOLD_RAD) {
       if (!drag.dragged) {
         drag.dragged = true;
-        // Now that this is clearly a drag, capture so we still get
-        // pointermove/up if the cursor leaves the SVG.
         try {
           svgRef.current?.setPointerCapture(e.pointerId);
         } catch {
-          // ignore — some browsers throw if already captured
+          // ignore
         }
       }
       setRotation(drag.startRotation + delta);
@@ -155,9 +248,19 @@ export function Sunburst() {
       try {
         svgRef.current?.releasePointerCapture(e.pointerId);
       } catch {
-        // not captured; nothing to release
+        // ignore
       }
     }
+  }
+
+  function onWheel(e: React.WheelEvent<SVGSVGElement>) {
+    if (!e.ctrlKey && !e.metaKey && e.shiftKey) {
+      // Allow Shift+wheel to scroll horizontally if needed
+      return;
+    }
+    e.preventDefault();
+    const delta = -e.deltaY * 0.0015;
+    setScale((s) => clamp(s + delta * s, MIN_SCALE, MAX_SCALE));
   }
 
   function consumeDragFlag(): boolean {
@@ -168,11 +271,10 @@ export function Sunburst() {
     return false;
   }
 
-  function handleArcClick(d: HierarchyRectangularNode<TreeNode>, isFocus: boolean) {
+  function handleArcClick(item: RenderItem) {
     if (consumeDragFlag()) return;
 
-    if (isFocus) {
-      // Center: zoom out one level.
+    if (item.isFocus) {
       if (clickTimer.current !== null) {
         window.clearTimeout(clickTimer.current);
         clickTimer.current = null;
@@ -182,16 +284,15 @@ export function Sunburst() {
       return;
     }
 
-    // Defer single-click so we can detect double-click as "clear".
     if (clickTimer.current !== null) {
       window.clearTimeout(clickTimer.current);
       clickTimer.current = null;
-      selectNode(d.data.uuid);
-      setNodeState(d.data.uuid, "UNSET");
+      selectNode(item.uuid);
+      setNodeState(item.uuid, "UNSET");
       return;
     }
-    const uuid = d.data.uuid;
-    const state = d.data.state;
+    const uuid = item.uuid;
+    const state = item.d.data.state;
     clickTimer.current = window.setTimeout(() => {
       clickTimer.current = null;
       selectNode(uuid);
@@ -200,6 +301,25 @@ export function Sunburst() {
   }
 
   const rotationDeg = (rotation * 180) / Math.PI;
+
+  const arcGenForSelection = d3arc<HierarchyRectangularNode<TreeNode>>()
+    .startAngle((d) => d.x0)
+    .endAngle((d) => d.x1)
+    .padAngle((d) => Math.min((d.x1 - d.x0) / 2, 0.004))
+    .padRadius(RADIUS * 1.5)
+    .innerRadius((d) => {
+      const totalDepth = (partitionData.height ?? 0) + 1;
+      return Math.max(d.y0 * (RADIUS / totalDepth), 0);
+    })
+    .outerRadius((d) => {
+      const totalDepth = (partitionData.height ?? 0) + 1;
+      const ringWidth = RADIUS / totalDepth;
+      return Math.max(d.y0 * ringWidth, d.y1 * ringWidth - 1);
+    });
+
+  const selectedItem = renderItems.find(
+    (it) => it.uuid === selectedUuid && !it.isFocus,
+  );
 
   return (
     <div className="sunburst-wrap">
@@ -222,121 +342,146 @@ export function Sunburst() {
           ))
         ) : (
           <span>
-            Click to cycle ratings. Double-click to clear. Drag to rotate. Tap
-            the center to zoom out.
+            Click to cycle ratings · double-click to clear · drag to rotate ·
+            scroll to zoom
           </span>
         )}
       </div>
-      <svg
-        ref={svgRef}
-        viewBox={`${-VIEW / 2} ${-VIEW / 2} ${VIEW} ${VIEW}`}
-        onPointerDown={onPointerDown}
-        onPointerMove={onPointerMove}
-        onPointerUp={onPointerUp}
-        onPointerCancel={onPointerUp}
-        style={{ touchAction: "none" }}
-      >
-        <g
-          className={dragRef.current ? "spinning" : "spinnable"}
-          transform={`rotate(${rotationDeg.toFixed(3)})`}
+      <div className="sunburst-scroll" ref={scrollRef}>
+        <svg
+          ref={svgRef}
+          viewBox={`${-VIEW / 2} ${-VIEW / 2} ${VIEW} ${VIEW}`}
+          onPointerDown={onPointerDown}
+          onPointerMove={onPointerMove}
+          onPointerUp={onPointerUp}
+          onPointerCancel={onPointerUp}
+          onWheel={onWheel}
+          style={{
+            touchAction: "none",
+            width: Math.max(
+              260,
+              Math.min(containerSize.w, containerSize.h) * scale,
+            ),
+            height: Math.max(
+              260,
+              Math.min(containerSize.w, containerSize.h) * scale,
+            ),
+            maxWidth: "none",
+            flex: "none",
+          }}
         >
-          {allNodes.map((d) => {
-            const isFocus = d.depth === 0;
-            const arcPath = arcGen(d) ?? "";
-            const fill = isFocus
-              ? "var(--bg-elev-2)"
-              : STATE_COLOR[d.data.state];
-            const dimmed = !isFocus && !activeFilter.has(d.data.state);
-            const midAngle = (d.x0 + d.x1) / 2;
-            const ringHeight = (d.y1 - d.y0) * ringWidth;
-
-            // Effective on-screen angle = midAngle + rotation, normalized [0, 2π).
-            // Used only to decide flip direction so text never reads upside down.
-            // The anchor position is fixed at the radial midpoint so the label
-            // doesn't jump when crossing the flip threshold.
-            const eff =
-              ((midAngle + rotation) % (2 * Math.PI) + 2 * Math.PI) %
-              (2 * Math.PI);
-            const flip = eff > Math.PI / 2 && eff < (3 * Math.PI) / 2;
-
-            const baseTextRot = (midAngle * 180) / Math.PI - 90;
-            const textRot = flip ? baseTextRot + 180 : baseTextRot;
-
-            const anchorR = ((d.y0 + d.y1) / 2) * ringWidth;
-            const lx = Math.sin(midAngle) * anchorR;
-            const ly = -Math.cos(midAngle) * anchorR;
-
-            // Font size shrinks with depth so the deep rings don't smear.
-            const fontSize = isFocus
-              ? 14
-              : d.depth >= 4
-                ? 7
-                : d.depth === 3
-                  ? 8
-                  : d.depth === 2
-                    ? 9
-                    : 10;
-
-            return (
+          <g
+            className={dragRef.current ? "spinning" : "spinnable"}
+            transform={`rotate(${rotationDeg.toFixed(3)})`}
+          >
+            {/* Pass 1: arc fills with the rate-on-click handler */}
+            {renderItems.map((it) => (
               <g
-                key={d.data.uuid}
-                style={{ opacity: dimmed ? 0.18 : 1 }}
+                key={`arc-${it.uuid}`}
+                style={{ opacity: it.dimmed ? 0.18 : 1 }}
                 onClick={(e) => {
                   e.stopPropagation();
-                  handleArcClick(d, isFocus);
+                  handleArcClick(it);
                 }}
               >
-                <path d={arcPath} fill={fill} className="sunburst-arc">
+                <path d={it.arcPath} fill={it.fill} className="sunburst-arc">
                   <title>
-                    {humanize(d.data.key)}
-                    {d.data.note ? ` — ${d.data.note}` : ""}
+                    {it.fullLabel}
+                    {it.note ? ` — ${it.note}` : ""}
                   </title>
                 </path>
-                {!isFocus && ringHeight > 14 && (
+              </g>
+            ))}
+
+            {/* Pass 2: labels — rendered on top so arcs never obscure text.
+                Each label is wrapped in its own clickable <g> so clicks on a
+                visible label always go to that label's arc, even if the text
+                visually overlaps a neighbouring arc. */}
+            {renderItems.map((it) =>
+              it.isFocus ? (
+                <text
+                  key={`label-${it.uuid}`}
+                  className="sunburst-label sunburst-center"
+                  style={{ fontSize: 16, fontWeight: 600 }}
+                  transform={`rotate(${(-rotationDeg).toFixed(3)})`}
+                  pointerEvents="none"
+                >
+                  {focusParent ? "↑" : "·"}
+                </text>
+              ) : it.showLabel ? (
+                <g
+                  key={`label-${it.uuid}`}
+                  style={{ opacity: it.dimmed ? 0.18 : 1 }}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    handleArcClick(it);
+                  }}
+                >
                   <text
                     className="sunburst-label"
-                    transform={`translate(${lx},${ly}) rotate(${textRot})`}
-                    style={{ fontSize }}
-                    pointerEvents="none"
+                    transform={`translate(${it.lx},${it.ly}) rotate(${it.textRot})`}
+                    style={{ fontSize: it.fontSize }}
                   >
-                    {humanize(d.data.key)}
+                    <title>
+                      {it.fullLabel}
+                      {it.note ? ` — ${it.note}` : ""}
+                    </title>
+                    {it.label}
                   </text>
-                )}
-                {isFocus && (
-                  <text
-                    className="sunburst-label sunburst-center"
-                    style={{ fontSize: 16, fontWeight: 600 }}
-                    transform={`rotate(${(-rotationDeg).toFixed(3)})`}
-                    pointerEvents="none"
-                  >
-                    {focusParent ? "↑" : "·"}
-                  </text>
-                )}
-              </g>
-            );
-          })}
-          {selectedUuid &&
-            allNodes.some((d) => d.data.uuid === selectedUuid) &&
-            (() => {
-              const d = allNodes.find((d) => d.data.uuid === selectedUuid)!;
-              if (d.depth === 0) return null;
-              return (
-                <path
-                  d={arcGen(d) ?? ""}
-                  fill="none"
-                  stroke="white"
-                  strokeWidth={2}
-                  pointerEvents="none"
-                />
-              );
-            })()}
-        </g>
-      </svg>
-      {rotation !== 0 && (
-        <button className="btn ghost" onClick={() => setRotation(0)}>
-          ↺ Reset rotation
+                </g>
+              ) : null,
+            )}
+
+            {selectedItem && (
+              <path
+                d={arcGenForSelection(selectedItem.d) ?? ""}
+                fill="none"
+                stroke="white"
+                strokeWidth={2}
+                pointerEvents="none"
+              />
+            )}
+          </g>
+        </svg>
+      </div>
+      <div className="sunburst-controls">
+        <button
+          className="btn"
+          onClick={() => setScale((s) => clamp(s - 0.15, MIN_SCALE, MAX_SCALE))}
+          disabled={scale <= MIN_SCALE + 0.001}
+          aria-label="Zoom out"
+        >
+          −
         </button>
-      )}
+        <button
+          className="btn"
+          onClick={() => setScale(1)}
+          disabled={scale === 1}
+        >
+          {Math.round(scale * 100)}%
+        </button>
+        <button
+          className="btn"
+          onClick={() => setScale((s) => clamp(s + 0.15, MIN_SCALE, MAX_SCALE))}
+          disabled={scale >= MAX_SCALE - 0.001}
+          aria-label="Zoom in"
+        >
+          +
+        </button>
+        {rotation !== 0 && (
+          <button
+            className="btn ghost"
+            style={{ marginLeft: 8 }}
+            onClick={() => setRotation(0)}
+          >
+            ↺ Reset rotation
+          </button>
+        )}
+      </div>
     </div>
   );
+}
+
+function clamp(v: number, lo: number, hi: number) {
+  return Math.max(lo, Math.min(hi, v));
 }
