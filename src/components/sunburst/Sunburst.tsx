@@ -226,12 +226,17 @@ export function Sunburst() {
           {allNodes.map((d) => {
             const isFocus = d.depth === 0;
             const arcPath = arcGen(d) ?? "";
-            const fill = isFocus ? "#222" : STATE_COLOR[d.data.state];
+            const fill = isFocus
+              ? "var(--bg-elev-2)"
+              : STATE_COLOR[d.data.state];
             const dimmed = !isFocus && !activeFilter.has(d.data.state);
             const midAngle = (d.x0 + d.x1) / 2;
             const ringHeight = (d.y1 - d.y0) * ringWidth;
 
-            // Effective on-screen angle = midAngle + rotation, normalized [0, 2π)
+            // Effective on-screen angle = midAngle + rotation, normalized [0, 2π).
+            // Used only to decide flip direction so text never reads upside down.
+            // The anchor position is fixed at the radial midpoint so the label
+            // doesn't jump when crossing the flip threshold.
             const eff =
               ((midAngle + rotation) % (2 * Math.PI) + 2 * Math.PI) %
               (2 * Math.PI);
@@ -240,12 +245,7 @@ export function Sunburst() {
             const baseTextRot = (midAngle * 180) / Math.PI - 90;
             const textRot = flip ? baseTextRot + 180 : baseTextRot;
 
-            // Anchor at inner edge if not flipped, outer edge if flipped.
-            const padIn = 4;
-            const padOut = 4;
-            const anchorR = flip
-              ? d.y1 * ringWidth - padOut
-              : d.y0 * ringWidth + padIn;
+            const anchorR = ((d.y0 + d.y1) / 2) * ringWidth;
             const lx = Math.sin(midAngle) * anchorR;
             const ly = -Math.cos(midAngle) * anchorR;
 
@@ -279,7 +279,6 @@ export function Sunburst() {
                   <text
                     className="sunburst-label"
                     transform={`translate(${lx},${ly}) rotate(${textRot})`}
-                    textAnchor="start"
                     style={{ fontSize }}
                     pointerEvents="none"
                   >

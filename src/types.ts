@@ -62,7 +62,7 @@ export interface ComparePartner {
 export type View = "sunburst" | "tree" | "compare";
 
 export const STATE_COLOR: Record<State, string> = {
-  UNSET: "#3a3a3a",
+  UNSET: "var(--c-unset)",
   HAVE_LIKE: "#22c55e",
   HAVE_CHANGE: "#f59e0b",
   HARD_NO: "#ef4444",

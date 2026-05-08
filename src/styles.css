@@ -1,16 +1,44 @@
 :root {
-  --bg: #161616;
-  --bg-elev: #1f1f1f;
-  --bg-elev-2: #262626;
-  --border: #333;
-  --text: #ececec;
-  --text-dim: #999;
-  --accent: #f5b942;
-  --c-unset: #3a3a3a;
-  --c-have-like: #22c55e;
-  --c-have-change: #f59e0b;
-  --c-hard-no: #ef4444;
-  --c-want: #3b82f6;
+  /* Light scheme (default) */
+  --bg: #fafafa;
+  --bg-elev: #ffffff;
+  --bg-elev-2: #f1f1f1;
+  --border: #d8d8d8;
+  --text: #1a1a1a;
+  --text-dim: #6b6b6b;
+  --accent: #d97706;
+  --accent-on: #ffffff;
+  --c-unset: #d4d4d4;
+  --shadow-strong: rgba(0, 0, 0, 0.18);
+  --backdrop: rgba(0, 0, 0, 0.45);
+  --selection-bg: rgba(217, 119, 6, 0.15);
+  --hover: #e8e8e8;
+  --accent-hover: #b45309;
+  --danger: #b91c1c;
+  --danger-text: #b91c1c;
+  --danger-hover-bg: #fee2e2;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #161616;
+    --bg-elev: #1f1f1f;
+    --bg-elev-2: #262626;
+    --border: #333;
+    --text: #ececec;
+    --text-dim: #999;
+    --accent: #f5b942;
+    --accent-on: #1a1a1a;
+    --c-unset: #3a3a3a;
+    --shadow-strong: rgba(0, 0, 0, 0.5);
+    --backdrop: rgba(0, 0, 0, 0.6);
+    --selection-bg: rgba(245, 185, 66, 0.12);
+    --hover: #2f2f2f;
+    --accent-hover: #ffce5e;
+    --danger: #6b2222;
+    --danger-text: #ffb4b4;
+    --danger-hover-bg: #4a1d1d;
+  }
 }
 
 * {
@@ -65,7 +93,7 @@ button {
   width: 14px;
   height: 14px;
   background: radial-gradient(circle at center, var(--accent), transparent 70%),
-    radial-gradient(circle at center, var(--c-have-like), transparent 60%);
+    radial-gradient(circle at center, #22c55e, transparent 60%);
   border-radius: 50%;
 }
 
@@ -93,27 +121,27 @@ button {
 }
 
 .btn:hover {
-  background: #2f2f2f;
+  background: var(--hover);
 }
 
 .btn.primary {
   background: var(--accent);
-  color: #1a1a1a;
+  color: var(--accent-on);
   border-color: var(--accent);
   font-weight: 600;
 }
 
 .btn.primary:hover {
-  background: #ffce5e;
+  background: var(--accent-hover);
 }
 
 .btn.danger {
-  border-color: #6b2222;
-  color: #ffb4b4;
+  border-color: var(--danger);
+  color: var(--danger-text);
 }
 
 .btn.danger:hover {
-  background: #4a1d1d;
+  background: var(--danger-hover-bg);
 }
 
 .btn.ghost {
@@ -146,7 +174,7 @@ button {
 
 .btn-group .btn.active {
   background: var(--accent);
-  color: #1a1a1a;
+  color: var(--accent-on);
   font-weight: 600;
 }
 
@@ -332,7 +360,7 @@ button {
 .dialog-backdrop {
   position: fixed;
   inset: 0;
-  background: rgba(0, 0, 0, 0.6);
+  background: var(--backdrop);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -416,7 +444,7 @@ button {
 }
 
 .tree-row.selected {
-  background: rgba(245, 185, 66, 0.12);
+  background: var(--selection-bg);
 }
 
 .tree-row .chevron {
@@ -483,7 +511,7 @@ button {
 .sunburst-label {
   fill: var(--text);
   pointer-events: none;
-  text-anchor: start;
+  text-anchor: middle;
   dominant-baseline: middle;
 }
 
@@ -580,7 +608,7 @@ button {
   max-width: 460px;
   font-size: 12px;
   line-height: 1.4;
-  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.35);
+  box-shadow: 0 6px 18px var(--shadow-strong);
   pointer-events: none;
 }
 
