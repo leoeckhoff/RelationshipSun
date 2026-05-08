@@ -16,6 +16,8 @@ interface Pair {
   pathLabel: string;
   mine: State;
   theirs: State;
+  mineNote?: string;
+  theirNote?: string;
 }
 
 function buildPaths(
@@ -91,12 +93,6 @@ export function CompareView() {
     );
   }
 
-  // Pair items by uuid first, then by (parentUuid + key) for custom-added items.
-  const myByKey = new Map<string, NodeRecord>();
-  for (const n of myNodes) myByKey.set(`${n.parentUuid}|${n.key}`, n);
-  const theirByKey = new Map<string, NodeRecord>();
-  for (const n of partner.nodes) theirByKey.set(`${n.parentUuid}|${n.key}`, n);
-
   const seen = new Set<string>();
   const pairs: Pair[] = [];
 
@@ -108,30 +104,20 @@ export function CompareView() {
 
   const myPaths = buildPaths(myNodes, rootUuid);
   const theirPaths = buildPaths(partner.nodes, rootUuid);
-
-  // First by uuid (covers seed items and identical custom uuids)
   const myById = new Map(myNodes.map((n) => [n.uuid, n]));
   const theirById = new Map(partner.nodes.map((n) => [n.uuid, n]));
 
   for (const n of myNodes) {
     const them = theirById.get(n.uuid);
-    if (them) {
-      addPair({
-        uuid: n.uuid,
-        key: n.key,
-        pathLabel: myPaths.get(n.uuid) ?? humanize(n.key),
-        mine: n.state,
-        theirs: them.state,
-      });
-    } else {
-      addPair({
-        uuid: n.uuid,
-        key: n.key,
-        pathLabel: myPaths.get(n.uuid) ?? humanize(n.key),
-        mine: n.state,
-        theirs: "UNSET",
-      });
-    }
+    addPair({
+      uuid: n.uuid,
+      key: n.key,
+      pathLabel: myPaths.get(n.uuid) ?? humanize(n.key),
+      mine: n.state,
+      theirs: them?.state ?? "UNSET",
+      mineNote: n.note,
+      theirNote: them?.note,
+    });
   }
   for (const n of partner.nodes) {
     if (myById.has(n.uuid)) continue;
@@ -141,6 +127,7 @@ export function CompareView() {
       pathLabel: theirPaths.get(n.uuid) ?? humanize(n.key),
       mine: "UNSET",
       theirs: n.state,
+      theirNote: n.note,
     });
   }
 
@@ -148,29 +135,36 @@ export function CompareView() {
     (p) => p.mine !== "UNSET" || p.theirs !== "UNSET",
   );
 
-  // Conflict: one says HARD_NO, the other says HAVE_LIKE/WANT.
+  const isPositive = (s: State) => s === "HAVE_LIKE" || s === "WANT";
+
   const conflicts = ratedPairs.filter(
     (p) =>
-      (p.mine === "HARD_NO" &&
-        (p.theirs === "HAVE_LIKE" || p.theirs === "WANT")) ||
-      (p.theirs === "HARD_NO" &&
-        (p.mine === "HAVE_LIKE" || p.mine === "WANT")),
+      (p.mine === "HARD_NO" && isPositive(p.theirs)) ||
+      (p.theirs === "HARD_NO" && isPositive(p.mine)),
   );
 
-  // Mismatch on change/want vs status quo
-  const wishesNotMet = ratedPairs.filter(
+  const discuss = ratedPairs.filter(
     (p) =>
       !conflicts.includes(p) &&
-      ((p.mine === "WANT" && p.theirs !== "WANT" && p.theirs !== "HAVE_LIKE") ||
-        (p.theirs === "WANT" && p.mine !== "WANT" && p.mine !== "HAVE_LIKE") ||
-        (p.mine === "HAVE_CHANGE" && p.theirs === "HAVE_LIKE") ||
-        (p.theirs === "HAVE_CHANGE" && p.mine === "HAVE_LIKE")),
+      (p.mine === "UNSURE" || p.theirs === "UNSURE"),
+  );
+
+  const wantsChange = (s: State) =>
+    s === "WANT" || s === "HAVE_CHANGE" || s === "WISHFUL";
+
+  const wishes = ratedPairs.filter(
+    (p) =>
+      !conflicts.includes(p) &&
+      !discuss.includes(p) &&
+      (wantsChange(p.mine) || wantsChange(p.theirs)) &&
+      p.mine !== p.theirs,
   );
 
   const matches = ratedPairs.filter(
     (p) =>
       !conflicts.includes(p) &&
-      !wishesNotMet.includes(p) &&
+      !discuss.includes(p) &&
+      !wishes.includes(p) &&
       p.mine !== "UNSET" &&
       p.theirs !== "UNSET" &&
       p.mine === p.theirs,
@@ -179,7 +173,8 @@ export function CompareView() {
   const oneSided = ratedPairs.filter(
     (p) =>
       !conflicts.includes(p) &&
-      !wishesNotMet.includes(p) &&
+      !discuss.includes(p) &&
+      !wishes.includes(p) &&
       !matches.includes(p) &&
       (p.mine === "UNSET" || p.theirs === "UNSET"),
   );
@@ -207,9 +202,16 @@ export function CompareView() {
         onSelect={selectNode}
       />
       <Section
-        title={`Wishes (${wishesNotMet.length})`}
+        title={`Discuss (${discuss.length})`}
+        muted="At least one of you said “unsure / open to discuss”."
+        rows={discuss}
+        nodeMap={nodeMap}
+        onSelect={selectNode}
+      />
+      <Section
+        title={`Wishes (${wishes.length})`}
         muted="One of you would like a change. Worth talking about."
-        rows={wishesNotMet}
+        rows={wishes}
         nodeMap={nodeMap}
         onSelect={selectNode}
       />
@@ -251,21 +253,51 @@ function Section({
       <div style={{ color: "var(--text-dim)", fontSize: 12, marginBottom: 8 }}>
         {muted}
       </div>
-      {rows.map((r) => (
-        <div
-          className="compare-row"
-          key={r.uuid}
-          onClick={() => nodeMap.has(r.uuid) && onSelect(r.uuid)}
-          style={{ cursor: nodeMap.has(r.uuid) ? "pointer" : "default" }}
-        >
-          <div>
-            <div className="key">{humanize(r.key)}</div>
-            <div className="path">{r.pathLabel}</div>
+      {rows.map((r) => {
+        const noteParts: string[] = [];
+        if (r.mineNote) noteParts.push(`Your note: ${r.mineNote}`);
+        if (r.theirNote) noteParts.push(`Their note: ${r.theirNote}`);
+        const hoverTitle = noteParts.join("\n\n");
+        return (
+          <div
+            className="compare-row"
+            key={r.uuid}
+            onClick={() => nodeMap.has(r.uuid) && onSelect(r.uuid)}
+            style={{ cursor: nodeMap.has(r.uuid) ? "pointer" : "default" }}
+            title={hoverTitle || undefined}
+          >
+            <div>
+              <div className="key">
+                {humanize(r.key)}
+                {(r.mineNote || r.theirNote) && (
+                  <span className="note-marker" style={{ marginLeft: 6 }}>
+                    ✎
+                  </span>
+                )}
+              </div>
+              <div className="path">{r.pathLabel}</div>
+              {(r.mineNote || r.theirNote) && (
+                <div className="compare-notes">
+                  {r.mineNote && (
+                    <div className="compare-note">
+                      <span className="compare-note-label">You</span>
+                      <span>{r.mineNote}</span>
+                    </div>
+                  )}
+                  {r.theirNote && (
+                    <div className="compare-note">
+                      <span className="compare-note-label">Them</span>
+                      <span>{r.theirNote}</span>
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+            <Chip label="You" state={r.mine} />
+            <Chip label="Them" state={r.theirs} />
           </div>
-          <Chip label="You" state={r.mine} />
-          <Chip label="Them" state={r.theirs} />
-        </div>
-      ))}
+        );
+      })}
     </section>
   );
 }

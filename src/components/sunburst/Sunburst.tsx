@@ -35,6 +35,7 @@ export function Sunburst() {
   const appRoot = useAppStore((s) => s.rootUuid);
   const selectNode = useAppStore((s) => s.selectNode);
   const selectedUuid = useAppStore((s) => s.selectedUuid);
+  const activeFilter = useAppStore((s) => s.activeFilter);
   const nodeMap = useNodeMap();
 
   const [focusUuid, setFocusUuid] = useState(appRoot);
@@ -104,9 +105,10 @@ export function Sunburst() {
           if (rotate > 90) rotate -= 180;
           if (rotate < -90) rotate += 180;
           const fill = isFocus ? "#222" : STATE_COLOR[d.data.state];
+          const dimmed = !isFocus && !activeFilter.has(d.data.state);
 
           return (
-            <g key={d.data.uuid}>
+            <g key={d.data.uuid} style={{ opacity: dimmed ? 0.18 : 1 }}>
               <path
                 d={arcPath}
                 fill={fill}

@@ -1,6 +1,22 @@
-export type State = "UNSET" | "HAVE_LIKE" | "HAVE_CHANGE" | "HARD_NO" | "WANT";
+export type State =
+  | "UNSET"
+  | "HAVE_LIKE"
+  | "HAVE_CHANGE"
+  | "HARD_NO"
+  | "WANT"
+  | "UNSURE"
+  | "WISHFUL";
 
-export const STATES: State[] = ["HAVE_LIKE", "HAVE_CHANGE", "HARD_NO", "WANT"];
+export const STATES: State[] = [
+  "HAVE_LIKE",
+  "HAVE_CHANGE",
+  "HARD_NO",
+  "WANT",
+  "UNSURE",
+  "WISHFUL",
+];
+
+export const ALL_STATES: State[] = ["UNSET", ...STATES];
 
 export interface NodeRecord {
   uuid: string;
@@ -36,6 +52,8 @@ export const STATE_COLOR: Record<State, string> = {
   HAVE_CHANGE: "#f59e0b",
   HARD_NO: "#ef4444",
   WANT: "#3b82f6",
+  UNSURE: "#a855f7",
+  WISHFUL: "#14b8a6",
 };
 
 export const STATE_LABEL: Record<State, string> = {
@@ -44,6 +62,8 @@ export const STATE_LABEL: Record<State, string> = {
   HAVE_CHANGE: "Part of us — I'd like it different",
   HARD_NO: "Absolute no",
   WANT: "I'd appreciate this",
+  UNSURE: "Unsure / open to discuss",
+  WISHFUL: "I'd love to, but I don't think it's possible",
 };
 
 export const STATE_SHORT: Record<State, string> = {
@@ -52,4 +72,6 @@ export const STATE_SHORT: Record<State, string> = {
   HAVE_CHANGE: "Change",
   HARD_NO: "Hard no",
   WANT: "Want",
+  UNSURE: "Unsure",
+  WISHFUL: "Wishful",
 };

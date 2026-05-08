@@ -273,25 +273,60 @@ button {
 
 .legend {
   display: flex;
-  gap: 16px;
+  gap: 8px;
   padding: 8px 14px;
   background: var(--bg-elev);
   border-top: 1px solid var(--border);
   flex-wrap: wrap;
+  align-items: center;
   font-size: 12px;
   color: var(--text-dim);
 }
 
-.legend .item {
-  display: flex;
+.legend > span:first-child {
+  color: var(--text-dim);
+  margin-right: 4px;
+}
+
+.legend-item {
+  display: inline-flex;
   align-items: center;
   gap: 6px;
+  padding: 3px 8px;
+  border-radius: 999px;
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--text-dim);
+  cursor: pointer;
+  font-size: 12px;
+  font-family: inherit;
+}
+
+.legend-item:hover {
+  background: var(--bg-elev-2);
+  color: var(--text);
+}
+
+.legend-item.active {
+  color: var(--text);
+  border-color: var(--border);
+  background: var(--bg-elev-2);
+}
+
+.legend-item.inactive {
+  opacity: 0.45;
 }
 
 .legend .swatch {
-  width: 12px;
-  height: 12px;
+  width: 11px;
+  height: 11px;
   border-radius: 3px;
+}
+
+.legend-reset {
+  margin-left: 8px;
+  padding: 3px 10px;
+  font-size: 12px;
 }
 
 .dialog-backdrop {
@@ -493,6 +528,47 @@ button {
   gap: 8px;
   padding: 8px 10px;
   border-bottom: 1px solid var(--border);
+  position: relative;
+}
+
+.compare-notes {
+  display: none;
+  position: absolute;
+  left: 10px;
+  top: 100%;
+  z-index: 5;
+  margin-top: 4px;
+  background: var(--bg-elev-2);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 8px 10px;
+  max-width: 460px;
+  font-size: 12px;
+  line-height: 1.4;
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.35);
+  pointer-events: none;
+}
+
+.compare-row:hover .compare-notes {
+  display: block;
+}
+
+.compare-note + .compare-note {
+  margin-top: 6px;
+  padding-top: 6px;
+  border-top: 1px solid var(--border);
+}
+
+.compare-note-label {
+  display: inline-block;
+  background: var(--bg);
+  color: var(--text-dim);
+  border-radius: 3px;
+  padding: 1px 6px;
+  margin-right: 6px;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
 }
 
 .compare-row .key {

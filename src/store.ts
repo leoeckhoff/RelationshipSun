@@ -6,6 +6,7 @@ import type {
   State,
   View,
 } from "./types";
+import { ALL_STATES } from "./types";
 import { buildSeedNodes, SEED_ROOT_UUID } from "./seed";
 import {
   loadNodes,
@@ -26,6 +27,7 @@ interface AppState {
   partner: ComparePartner | null;
   pendingDelete: string | null;
   pendingAddChild: string | null;
+  activeFilter: Set<State>;
 
   setView: (v: View) => void;
   selectNode: (uuid: string | null) => void;
@@ -44,6 +46,8 @@ interface AppState {
   setProfileName: (name: string) => void;
   loadPartner: (partner: ComparePartner) => void;
   clearPartner: () => void;
+  toggleFilter: (state: State) => void;
+  resetFilter: () => void;
 }
 
 function uuid(): string {
@@ -90,6 +94,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   partner: null,
   pendingDelete: null,
   pendingAddChild: null,
+  activeFilter: new Set(ALL_STATES),
 
   setView: (v) => set({ view: v }),
 
@@ -186,6 +191,15 @@ export const useAppStore = create<AppState>((set, get) => ({
 
   loadPartner: (partner) => set({ partner, view: "compare" }),
   clearPartner: () => set({ partner: null }),
+
+  toggleFilter: (state) => {
+    const next = new Set(get().activeFilter);
+    if (next.has(state)) next.delete(state);
+    else next.add(state);
+    set({ activeFilter: next });
+  },
+
+  resetFilter: () => set({ activeFilter: new Set(ALL_STATES) }),
 }));
 
 export function useNodeMap(): Map<string, NodeRecord> {

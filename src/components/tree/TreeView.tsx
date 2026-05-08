@@ -1,15 +1,40 @@
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { useAppStore, useChildrenIndex } from "../../store";
-import { STATE_COLOR, type NodeRecord } from "../../types";
+import { STATE_COLOR, type NodeRecord, type State } from "../../types";
 import { humanize } from "../../util";
 
 export function TreeView() {
   const rootUuid = useAppStore((s) => s.rootUuid);
+  const nodes = useAppStore((s) => s.nodes);
   const childrenIdx = useChildrenIndex();
   const selectNode = useAppStore((s) => s.selectNode);
   const selectedUuid = useAppStore((s) => s.selectedUuid);
+  const activeFilter = useAppStore((s) => s.activeFilter);
 
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
+
+  const visible = useMemo(() => {
+    const byId = new Map<string, NodeRecord>();
+    for (const n of nodes) byId.set(n.uuid, n);
+    const out = new Set<string>();
+    function walk(uuid: string): boolean {
+      const node = byId.get(uuid);
+      if (!node) return false;
+      const kids = childrenIdx.get(uuid) ?? [];
+      let anyChildVisible = false;
+      for (const k of kids) {
+        if (walk(k.uuid)) anyChildVisible = true;
+      }
+      const selfVisible = activeFilter.has(node.state as State);
+      if (selfVisible || anyChildVisible) {
+        out.add(uuid);
+        return true;
+      }
+      return false;
+    }
+    walk(rootUuid);
+    return out;
+  }, [nodes, activeFilter, childrenIdx, rootUuid]);
 
   function toggle(uuid: string) {
     setCollapsed((prev) => {
@@ -21,7 +46,10 @@ export function TreeView() {
   }
 
   function renderNode(uuid: string, depth: number): React.ReactNode {
-    const kids = childrenIdx.get(uuid) ?? [];
+    if (!visible.has(uuid)) return null;
+    const kids = (childrenIdx.get(uuid) ?? []).filter((k) =>
+      visible.has(k.uuid),
+    );
     const isCollapsed = collapsed.has(uuid);
     return (
       <div key={uuid}>
@@ -39,6 +67,16 @@ export function TreeView() {
             {kids.map((c) => renderNode(c.uuid, depth + 1))}
           </div>
         )}
+      </div>
+    );
+  }
+
+  if (!visible.has(rootUuid)) {
+    return (
+      <div className="tree">
+        <div className="empty-state">
+          No items match the current filter.
+        </div>
       </div>
     );
   }

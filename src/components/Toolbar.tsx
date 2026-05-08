@@ -23,36 +23,37 @@ export function Toolbar() {
   const fileRef = useRef<HTMLInputElement | null>(null);
   const partnerFileRef = useRef<HTMLInputElement | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
-  const [importMode, setImportMode] = useState<"self" | "partner">("self");
 
-  function pickFile(mode: "self" | "partner") {
-    setImportMode(mode);
-    if (mode === "self") fileRef.current?.click();
-    else partnerFileRef.current?.click();
-  }
-
-  async function handleFile(e: React.ChangeEvent<HTMLInputElement>) {
+  async function readFile(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
-    if (!file) return;
+    e.target.value = "";
+    if (!file) return null;
     try {
       const text = await readFileAsText(file);
-      const result = parseImportData(text);
-      if (importMode === "partner") {
-        const partnerName = result.name?.trim() || file.name.replace(/\.json$/, "");
-        loadPartner({ name: partnerName, nodes: result.nodes });
-      } else {
-        importNodes(result.nodes, result.name);
-        const fmtNote =
-          result.format === "smorgasbord"
-            ? " Imported from the original Sunburst Smorgasbord — YES → Like, MAYBE → Change, NO → unset."
-            : "";
-        alert(`Loaded ${result.nodes.length} items.${fmtNote}`);
-      }
+      return { result: parseImportData(text), file };
     } catch (err) {
       alert(`Import failed: ${(err as Error).message}`);
-    } finally {
-      e.target.value = "";
+      return null;
     }
+  }
+
+  async function onSelfFile(e: React.ChangeEvent<HTMLInputElement>) {
+    const got = await readFile(e);
+    if (!got) return;
+    importNodes(got.result.nodes, got.result.name);
+    const fmtNote =
+      got.result.format === "smorgasbord"
+        ? " Imported from the original Sunburst Smorgasbord — YES → Like, MAYBE → Change, NO → unset."
+        : "";
+    alert(`Loaded ${got.result.nodes.length} items.${fmtNote}`);
+  }
+
+  async function onPartnerFile(e: React.ChangeEvent<HTMLInputElement>) {
+    const got = await readFile(e);
+    if (!got) return;
+    const name =
+      got.result.name?.trim() || got.file.name.replace(/\.json$/, "");
+    loadPartner({ name, nodes: got.result.nodes });
   }
 
   return (
@@ -82,10 +83,10 @@ export function Toolbar() {
 
       <div className="spacer" />
 
-      <button className="btn" onClick={() => pickFile("self")}>
+      <button className="btn" onClick={() => fileRef.current?.click()}>
         Import…
       </button>
-      <button className="btn" onClick={() => pickFile("partner")}>
+      <button className="btn" onClick={() => partnerFileRef.current?.click()}>
         Load partner…
       </button>
       <button
@@ -103,14 +104,14 @@ export function Toolbar() {
         type="file"
         accept=".json,application/json"
         style={{ display: "none" }}
-        onChange={handleFile}
+        onChange={onSelfFile}
       />
       <input
         ref={partnerFileRef}
         type="file"
         accept=".json,application/json"
         style={{ display: "none" }}
-        onChange={handleFile}
+        onChange={onPartnerFile}
       />
 
       {settingsOpen && <SettingsDialog onClose={() => setSettingsOpen(false)} />}
