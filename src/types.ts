@@ -42,6 +42,12 @@ export interface NodeRecord {
   custom?: boolean;
 }
 
+export interface Profile {
+  id: string;
+  name: string;
+  nodes: NodeRecord[];
+}
+
 export interface Settings {
   confirmDelete: boolean;
 }

@@ -5,6 +5,12 @@ export function SettingsDialog({ onClose }: { onClose: () => void }) {
   const setSettings = useAppStore((s) => s.setSettings);
   const resetToSeed = useAppStore((s) => s.resetToSeed);
   const clearAllStates = useAppStore((s) => s.clearAllStates);
+  const profiles = useAppStore((s) => s.profiles);
+  const activeProfileId = useAppStore((s) => s.activeProfileId);
+  const profileName = useAppStore((s) => s.profileName);
+  const deleteProfile = useAppStore((s) => s.deleteProfile);
+
+  const canDelete = profiles.length > 1;
 
   return (
     <div className="dialog-backdrop" onClick={onClose}>
@@ -33,29 +39,46 @@ export function SettingsDialog({ onClose }: { onClose: () => void }) {
             onClick={() => {
               if (
                 confirm(
-                  "Clear all ratings (keep all items)? Your notes will also be removed.",
+                  `Clear all ratings on "${profileName}" (keep all items)? Notes will also be removed.`,
                 )
               ) {
                 clearAllStates();
               }
             }}
           >
-            Clear all ratings
+            Clear all ratings on this profile
           </button>
           <button
-            className="btn danger"
+            className="btn"
             onClick={() => {
               if (
                 confirm(
-                  "Reset everything to the original tree? Your custom items, ratings, and notes will be lost.",
+                  `Reset "${profileName}" to the original tree? Custom items, ratings, and notes will be lost.`,
                 )
               ) {
                 resetToSeed();
               }
             }}
           >
-            Reset to original tree
+            Reset this profile to original tree
           </button>
+          {canDelete && (
+            <button
+              className="btn danger"
+              onClick={() => {
+                if (
+                  confirm(
+                    `Delete the profile "${profileName}"? Everything in it will be lost.`,
+                  )
+                ) {
+                  deleteProfile(activeProfileId);
+                  onClose();
+                }
+              }}
+            >
+              Delete this profile
+            </button>
+          )}
         </div>
 
         <div className="actions">

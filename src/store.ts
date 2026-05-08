@@ -2,6 +2,7 @@ import { create } from "zustand";
 import type {
   ComparePartner,
   NodeRecord,
+  Profile,
   Settings,
   State,
   View,
@@ -9,21 +10,27 @@ import type {
 import { ALL_STATES } from "./types";
 import { buildSeedNodes, SEED_ROOT_UUID } from "./seed";
 import {
-  loadNodes,
-  loadProfileName,
+  genId,
+  loadProfiles,
   loadSettings,
-  saveNodes,
-  saveProfileName,
+  saveActiveId,
+  saveProfiles,
   saveSettings,
 } from "./storage";
 
 interface AppState {
+  // Source of truth
+  profiles: Profile[];
+  activeProfileId: string;
+
+  // Mirrors of the active profile, updated on every change.
   nodes: NodeRecord[];
+  profileName: string;
+
   rootUuid: string;
   selectedUuid: string | null;
   view: View;
   settings: Settings;
-  profileName: string;
   partner: ComparePartner | null;
   pendingDelete: string | null;
   pendingAddChild: string | null;
@@ -40,11 +47,17 @@ interface AppState {
   confirmDelete: () => void;
   openAddChild: (parentUuid: string) => void;
   closeAddChild: () => void;
+
+  // Profile actions
+  addProfile: (init?: { name?: string; nodes?: NodeRecord[] }) => string;
+  switchProfile: (id: string) => void;
+  renameProfile: (id: string, name: string) => void;
+  deleteProfile: (id: string) => void;
+
   importNodes: (nodes: NodeRecord[], name?: string) => void;
   resetToSeed: () => void;
   clearAllStates: () => void;
   setSettings: (patch: Partial<Settings>) => void;
-  setProfileName: (name: string) => void;
   loadPartner: (partner: ComparePartner) => void;
   clearPartner: () => void;
   toggleFilter: (state: State) => void;
@@ -52,18 +65,14 @@ interface AppState {
   setSunburstFocus: (uuid: string) => void;
 }
 
-function uuid(): string {
-  if (typeof crypto !== "undefined" && "randomUUID" in crypto) {
-    return crypto.randomUUID();
-  }
-  return Math.random().toString(36).slice(2) + Date.now().toString(36);
+function newUuid(): string {
+  return genId();
 }
 
-function persist(nodes: NodeRecord[]) {
-  saveNodes(nodes);
-}
-
-function collectDescendants(nodes: NodeRecord[], rootUuid: string): Set<string> {
+function collectDescendants(
+  nodes: NodeRecord[],
+  rootUuid: string,
+): Set<string> {
   const childrenOf = new Map<string, string[]>();
   for (const n of nodes) {
     const list = childrenOf.get(n.parentUuid) ?? [];
@@ -82,17 +91,47 @@ function collectDescendants(nodes: NodeRecord[], rootUuid: string): Set<string> 
   return out;
 }
 
-const initialNodes = loadNodes() ?? buildSeedNodes();
+function pickActive(
+  profiles: Profile[],
+  activeId: string,
+): Profile {
+  return profiles.find((p) => p.id === activeId) ?? profiles[0];
+}
+
+function loadInitial(): {
+  profiles: Profile[];
+  activeId: string;
+} {
+  const loaded = loadProfiles();
+  if (loaded) return loaded;
+  const profile: Profile = {
+    id: genId(),
+    name: "Me",
+    nodes: buildSeedNodes(),
+  };
+  saveProfiles([profile]);
+  saveActiveId(profile.id);
+  return { profiles: [profile], activeId: profile.id };
+}
+
+const initial = loadInitial();
+const initialActive = pickActive(initial.profiles, initial.activeId);
 const initialSettings = loadSettings();
-const initialProfile = loadProfileName();
+
+function persistActive(profiles: Profile[]) {
+  saveProfiles(profiles);
+}
 
 export const useAppStore = create<AppState>((set, get) => ({
-  nodes: initialNodes,
+  profiles: initial.profiles,
+  activeProfileId: initial.activeId,
+  nodes: initialActive.nodes,
+  profileName: initialActive.name,
+
   rootUuid: SEED_ROOT_UUID,
   selectedUuid: null,
   view: "sunburst",
   settings: initialSettings,
-  profileName: initialProfile,
   partner: null,
   pendingDelete: null,
   pendingAddChild: null,
@@ -104,42 +143,81 @@ export const useAppStore = create<AppState>((set, get) => ({
   selectNode: (uuid) => set({ selectedUuid: uuid }),
 
   setNodeState: (uuid, state) => {
-    const nodes = get().nodes.map((n) => (n.uuid === uuid ? { ...n, state } : n));
-    persist(nodes);
-    set({ nodes });
+    const { profiles, activeProfileId } = get();
+    const newProfiles = profiles.map((p) =>
+      p.id !== activeProfileId
+        ? p
+        : {
+            ...p,
+            nodes: p.nodes.map((n) =>
+              n.uuid === uuid ? { ...n, state } : n,
+            ),
+          },
+    );
+    persistActive(newProfiles);
+    const active = pickActive(newProfiles, activeProfileId);
+    set({ profiles: newProfiles, nodes: active.nodes });
   },
 
   setNodeNote: (uuid, note) => {
+    const { profiles, activeProfileId } = get();
     const trimmed = note.trim();
-    const nodes = get().nodes.map((n) =>
-      n.uuid === uuid ? { ...n, note: trimmed ? trimmed : undefined } : n,
+    const newProfiles = profiles.map((p) =>
+      p.id !== activeProfileId
+        ? p
+        : {
+            ...p,
+            nodes: p.nodes.map((n) =>
+              n.uuid === uuid
+                ? { ...n, note: trimmed ? trimmed : undefined }
+                : n,
+            ),
+          },
     );
-    persist(nodes);
-    set({ nodes });
+    persistActive(newProfiles);
+    const active = pickActive(newProfiles, activeProfileId);
+    set({ profiles: newProfiles, nodes: active.nodes });
   },
 
   addChild: (parentUuid, key) => {
+    const { profiles, activeProfileId } = get();
     const newNode: NodeRecord = {
-      uuid: uuid(),
+      uuid: newUuid(),
       parentUuid,
       key: key.trim(),
       state: "UNSET",
       custom: true,
     };
-    const nodes = [...get().nodes, newNode];
-    persist(nodes);
-    set({ nodes, pendingAddChild: null, selectedUuid: newNode.uuid });
+    const newProfiles = profiles.map((p) =>
+      p.id !== activeProfileId ? p : { ...p, nodes: [...p.nodes, newNode] },
+    );
+    persistActive(newProfiles);
+    const active = pickActive(newProfiles, activeProfileId);
+    set({
+      profiles: newProfiles,
+      nodes: active.nodes,
+      pendingAddChild: null,
+      selectedUuid: newNode.uuid,
+    });
   },
 
   requestDelete: (uuid) => {
     if (get().settings.confirmDelete) {
       set({ pendingDelete: uuid });
     } else {
-      const toRemove = collectDescendants(get().nodes, uuid);
-      const nodes = get().nodes.filter((n) => !toRemove.has(n.uuid));
-      persist(nodes);
+      const { profiles, activeProfileId } = get();
+      const active = pickActive(profiles, activeProfileId);
+      const toRemove = collectDescendants(active.nodes, uuid);
+      const newProfiles = profiles.map((p) =>
+        p.id !== activeProfileId
+          ? p
+          : { ...p, nodes: p.nodes.filter((n) => !toRemove.has(n.uuid)) },
+      );
+      persistActive(newProfiles);
+      const newActive = pickActive(newProfiles, activeProfileId);
       set({
-        nodes,
+        profiles: newProfiles,
+        nodes: newActive.nodes,
         selectedUuid: null,
         pendingDelete: null,
       });
@@ -151,45 +229,149 @@ export const useAppStore = create<AppState>((set, get) => ({
   confirmDelete: () => {
     const target = get().pendingDelete;
     if (!target) return;
-    const toRemove = collectDescendants(get().nodes, target);
-    const nodes = get().nodes.filter((n) => !toRemove.has(n.uuid));
-    persist(nodes);
-    set({ nodes, selectedUuid: null, pendingDelete: null });
+    const { profiles, activeProfileId } = get();
+    const active = pickActive(profiles, activeProfileId);
+    const toRemove = collectDescendants(active.nodes, target);
+    const newProfiles = profiles.map((p) =>
+      p.id !== activeProfileId
+        ? p
+        : { ...p, nodes: p.nodes.filter((n) => !toRemove.has(n.uuid)) },
+    );
+    persistActive(newProfiles);
+    const newActive = pickActive(newProfiles, activeProfileId);
+    set({
+      profiles: newProfiles,
+      nodes: newActive.nodes,
+      selectedUuid: null,
+      pendingDelete: null,
+    });
   },
 
   openAddChild: (parentUuid) => set({ pendingAddChild: parentUuid }),
   closeAddChild: () => set({ pendingAddChild: null }),
 
-  importNodes: (nodes, name) => {
-    persist(nodes);
-    if (name) {
-      saveProfileName(name);
-      set({ profileName: name });
+  addProfile: (init) => {
+    const id = genId();
+    const profile: Profile = {
+      id,
+      name: init?.name?.trim() || "Partner",
+      nodes: init?.nodes ?? buildSeedNodes(),
+    };
+    const newProfiles = [...get().profiles, profile];
+    persistActive(newProfiles);
+    saveActiveId(id);
+    set({
+      profiles: newProfiles,
+      activeProfileId: id,
+      nodes: profile.nodes,
+      profileName: profile.name,
+      selectedUuid: null,
+      sunburstFocus: SEED_ROOT_UUID,
+    });
+    return id;
+  },
+
+  switchProfile: (id) => {
+    const { profiles } = get();
+    if (!profiles.some((p) => p.id === id)) return;
+    saveActiveId(id);
+    const active = pickActive(profiles, id);
+    set({
+      activeProfileId: id,
+      nodes: active.nodes,
+      profileName: active.name,
+      selectedUuid: null,
+      sunburstFocus: SEED_ROOT_UUID,
+    });
+  },
+
+  renameProfile: (id, name) => {
+    const { profiles, activeProfileId } = get();
+    const newProfiles = profiles.map((p) =>
+      p.id === id ? { ...p, name } : p,
+    );
+    persistActive(newProfiles);
+    set({
+      profiles: newProfiles,
+      profileName:
+        id === activeProfileId
+          ? name
+          : pickActive(newProfiles, activeProfileId).name,
+    });
+  },
+
+  deleteProfile: (id) => {
+    const { profiles, activeProfileId } = get();
+    if (profiles.length <= 1) return; // keep at least one profile
+    const newProfiles = profiles.filter((p) => p.id !== id);
+    persistActive(newProfiles);
+    let newActiveId = activeProfileId;
+    if (id === activeProfileId) {
+      newActiveId = newProfiles[0].id;
+      saveActiveId(newActiveId);
     }
-    set({ nodes, selectedUuid: null });
+    const active = pickActive(newProfiles, newActiveId);
+    set({
+      profiles: newProfiles,
+      activeProfileId: newActiveId,
+      nodes: active.nodes,
+      profileName: active.name,
+      selectedUuid: null,
+      sunburstFocus: SEED_ROOT_UUID,
+    });
+  },
+
+  importNodes: (nodes, name) => {
+    const { profiles, activeProfileId } = get();
+    const newProfiles = profiles.map((p) =>
+      p.id !== activeProfileId
+        ? p
+        : { ...p, nodes, name: name?.trim() || p.name },
+    );
+    persistActive(newProfiles);
+    const active = pickActive(newProfiles, activeProfileId);
+    set({
+      profiles: newProfiles,
+      nodes: active.nodes,
+      profileName: active.name,
+      selectedUuid: null,
+    });
   },
 
   resetToSeed: () => {
-    const fresh = buildSeedNodes();
-    persist(fresh);
-    set({ nodes: fresh, selectedUuid: null });
+    const { profiles, activeProfileId } = get();
+    const newProfiles = profiles.map((p) =>
+      p.id !== activeProfileId ? p : { ...p, nodes: buildSeedNodes() },
+    );
+    persistActive(newProfiles);
+    const active = pickActive(newProfiles, activeProfileId);
+    set({
+      profiles: newProfiles,
+      nodes: active.nodes,
+      selectedUuid: null,
+      sunburstFocus: SEED_ROOT_UUID,
+    });
   },
 
   clearAllStates: () => {
-    const nodes = get().nodes.map((n) => ({ ...n, state: "UNSET" as State }));
-    persist(nodes);
-    set({ nodes });
+    const { profiles, activeProfileId } = get();
+    const newProfiles = profiles.map((p) =>
+      p.id !== activeProfileId
+        ? p
+        : {
+            ...p,
+            nodes: p.nodes.map((n) => ({ ...n, state: "UNSET" as State })),
+          },
+    );
+    persistActive(newProfiles);
+    const active = pickActive(newProfiles, activeProfileId);
+    set({ profiles: newProfiles, nodes: active.nodes });
   },
 
   setSettings: (patch) => {
     const settings = { ...get().settings, ...patch };
     saveSettings(settings);
     set({ settings });
-  },
-
-  setProfileName: (name) => {
-    saveProfileName(name);
-    set({ profileName: name });
   },
 
   loadPartner: (partner) => set({ partner, view: "compare" }),

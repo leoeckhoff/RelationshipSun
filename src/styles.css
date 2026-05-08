@@ -111,6 +111,17 @@ button {
   width: 140px;
 }
 
+.toolbar .profile-select {
+  background: var(--bg-elev-2);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 5px 8px;
+  font-size: 13px;
+  font-family: inherit;
+  cursor: pointer;
+}
+
 .btn {
   background: var(--bg-elev-2);
   color: var(--text);

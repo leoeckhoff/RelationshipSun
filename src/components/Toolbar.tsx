@@ -14,11 +14,13 @@ export function Toolbar() {
   const view = useAppStore((s) => s.view);
   const setView = useAppStore((s) => s.setView);
   const profileName = useAppStore((s) => s.profileName);
-  const setProfileName = useAppStore((s) => s.setProfileName);
+  const profiles = useAppStore((s) => s.profiles);
+  const activeProfileId = useAppStore((s) => s.activeProfileId);
+  const switchProfile = useAppStore((s) => s.switchProfile);
+  const renameProfile = useAppStore((s) => s.renameProfile);
+  const addProfile = useAppStore((s) => s.addProfile);
   const nodes = useAppStore((s) => s.nodes);
   const importNodes = useAppStore((s) => s.importNodes);
-  const loadPartner = useAppStore((s) => s.loadPartner);
-  const partner = useAppStore((s) => s.partner);
 
   const fileRef = useRef<HTMLInputElement | null>(null);
   const partnerFileRef = useRef<HTMLInputElement | null>(null);
@@ -45,7 +47,7 @@ export function Toolbar() {
       got.result.format === "smorgasbord"
         ? " Imported from the original Sunburst Smorgasbord — YES → Like, MAYBE → Change, NO → unset."
         : "";
-    alert(`Loaded ${got.result.nodes.length} items.${fmtNote}`);
+    alert(`Loaded ${got.result.nodes.length} items into "${profileName}".${fmtNote}`);
   }
 
   async function onPartnerFile(e: React.ChangeEvent<HTMLInputElement>) {
@@ -53,20 +55,51 @@ export function Toolbar() {
     if (!got) return;
     const name =
       got.result.name?.trim() || got.file.name.replace(/\.json$/, "");
-    loadPartner({ name, nodes: got.result.nodes });
+    addProfile({ name, nodes: got.result.nodes });
+    setView("compare");
+  }
+
+  function onAddPartner() {
+    const name = prompt("Name for the new partner profile?", "Partner");
+    if (name === null) return;
+    addProfile({ name: name.trim() || "Partner" });
   }
 
   return (
     <header className="toolbar">
       <h1>Relationship Sun</h1>
 
+      {profiles.length > 1 && (
+        <select
+          className="profile-select"
+          value={activeProfileId}
+          onChange={(e) => switchProfile(e.target.value)}
+          aria-label="Switch profile"
+          title="Switch profile"
+        >
+          {profiles.map((p) => (
+            <option key={p.id} value={p.id}>
+              {p.name}
+            </option>
+          ))}
+        </select>
+      )}
+
       <input
         type="text"
         value={profileName}
-        onChange={(e) => setProfileName(e.target.value)}
-        aria-label="Your profile name"
-        title="Your profile name (used in exports)"
+        onChange={(e) => renameProfile(activeProfileId, e.target.value)}
+        aria-label="Profile name"
+        title="Edit this profile's name"
       />
+
+      <button
+        className="btn"
+        onClick={onAddPartner}
+        title="Create a new profile (e.g. for your partner) on this device"
+      >
+        + Add partner
+      </button>
 
       <div className="btn-group" role="tablist">
         {VIEWS.map((v) => (
@@ -76,7 +109,6 @@ export function Toolbar() {
             onClick={() => setView(v.id)}
           >
             {v.label}
-            {v.id === "compare" && partner ? ` · ${partner.name}` : ""}
           </button>
         ))}
       </div>
@@ -86,8 +118,12 @@ export function Toolbar() {
       <button className="btn" onClick={() => fileRef.current?.click()}>
         Import…
       </button>
-      <button className="btn" onClick={() => partnerFileRef.current?.click()}>
-        Load partner…
+      <button
+        className="btn"
+        onClick={() => partnerFileRef.current?.click()}
+        title="Load a JSON your partner exported as a new profile on this device"
+      >
+        Load partner file…
       </button>
       <button
         className="btn primary"
