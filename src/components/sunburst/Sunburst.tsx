@@ -118,7 +118,9 @@ export function Sunburst() {
       dragged: false,
       pointerId: e.pointerId,
     };
-    svgRef.current?.setPointerCapture(e.pointerId);
+    // Don't capture yet — capturing reroutes the upcoming click event from
+    // the arc to the SVG, which kills the rate-on-click handler. We only
+    // capture once we've actually detected a drag.
   }
 
   function onPointerMove(e: React.PointerEvent<SVGSVGElement>) {
@@ -130,8 +132,19 @@ export function Sunburst() {
     // wrap to [-π, π] so single drags rotate sensibly across the angle seam
     if (delta > Math.PI) delta -= 2 * Math.PI;
     if (delta < -Math.PI) delta += 2 * Math.PI;
-    if (Math.abs(delta) > DRAG_THRESHOLD_RAD) drag.dragged = true;
-    setRotation(drag.startRotation + delta);
+    if (Math.abs(delta) > DRAG_THRESHOLD_RAD) {
+      if (!drag.dragged) {
+        drag.dragged = true;
+        // Now that this is clearly a drag, capture so we still get
+        // pointermove/up if the cursor leaves the SVG.
+        try {
+          svgRef.current?.setPointerCapture(e.pointerId);
+        } catch {
+          // ignore — some browsers throw if already captured
+        }
+      }
+      setRotation(drag.startRotation + delta);
+    }
   }
 
   function onPointerUp(e: React.PointerEvent<SVGSVGElement>) {
@@ -139,7 +152,11 @@ export function Sunburst() {
     if (drag && drag.pointerId === e.pointerId) {
       if (drag.dragged) wasDragged.current = true;
       dragRef.current = null;
-      svgRef.current?.releasePointerCapture(e.pointerId);
+      try {
+        svgRef.current?.releasePointerCapture(e.pointerId);
+      } catch {
+        // not captured; nothing to release
+      }
     }
   }
 
