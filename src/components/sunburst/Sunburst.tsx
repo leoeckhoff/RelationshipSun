@@ -31,9 +31,10 @@ const RADIUS = 360;
 const MARGIN = 90; // room for label overflow
 const VIEW = (RADIUS + MARGIN) * 2;
 const DRAG_THRESHOLD_RAD = 0.02;
+const DRAG_THRESHOLD_PX = 4;
 const DOUBLE_CLICK_MS = 260;
-const MIN_SCALE = 0.6;
-const MAX_SCALE = 3;
+const MIN_SCALE = 0.4;
+const MAX_SCALE = 8;
 
 interface RenderItem {
   uuid: string;
@@ -62,6 +63,34 @@ interface BranchDivider {
   topLevel: boolean;
 }
 
+type Interaction =
+  | {
+      kind: "rotate";
+      pointerId: number;
+      startMouseAngle: number;
+      startRotation: number;
+      moved: boolean;
+    }
+  | {
+      kind: "pan";
+      pointerId: number;
+      startClientX: number;
+      startClientY: number;
+      startPan: { x: number; y: number };
+      moved: boolean;
+    }
+  | {
+      kind: "pinch";
+      pointerIdA: number;
+      pointerIdB: number;
+      startDist: number;
+      startScale: number;
+      // SVG-space midpoint at pinch start, and the world point under it,
+      // so we can keep that world point pinned to the live midpoint.
+      startWorld: { x: number; y: number };
+    }
+  | null;
+
 export function Sunburst() {
   const nodes = useAppStore((s) => s.nodes);
   const appRoot = useAppStore((s) => s.rootUuid);
@@ -75,15 +104,29 @@ export function Sunburst() {
 
   const [rotation, setRotation] = useState(0);
   const [scale, setScale] = useState(1);
-  const [containerSize, setContainerSize] = useState({ w: 600, h: 600 });
+  const [pan, setPan] = useState({ x: 0, y: 0 });
   const svgRef = useRef<SVGSVGElement | null>(null);
-  const scrollRef = useRef<HTMLDivElement | null>(null);
-  const dragRef = useRef<{
-    startMouseAngle: number;
-    startRotation: number;
-    dragged: boolean;
-    pointerId: number;
-  } | null>(null);
+  const wrapRef = useRef<HTMLDivElement | null>(null);
+
+  // Live refs so wheel/pointer handlers can compute new state without
+  // re-binding when scale or pan changes.
+  const scaleRef = useRef(scale);
+  const panRef = useRef(pan);
+  const rotationRef = useRef(rotation);
+  useEffect(() => {
+    scaleRef.current = scale;
+  }, [scale]);
+  useEffect(() => {
+    panRef.current = pan;
+  }, [pan]);
+  useEffect(() => {
+    rotationRef.current = rotation;
+  }, [rotation]);
+
+  const interactionRef = useRef<Interaction>(null);
+  const pointers = useRef<Map<number, { clientX: number; clientY: number }>>(
+    new Map(),
+  );
   const wasDragged = useRef(false);
   const clickTimer = useRef<number | null>(null);
 
@@ -93,18 +136,11 @@ export function Sunburst() {
     }
   }, [nodes, focusUuid, appRoot, setFocusUuid]);
 
+  // Reset pan when focus changes so the new wheel is centred.
   useEffect(() => {
-    const el = scrollRef.current;
-    if (!el) return;
-    const update = () => {
-      const r = el.getBoundingClientRect();
-      setContainerSize({ w: r.width, h: r.height });
-    };
-    update();
-    const obs = new ResizeObserver(update);
-    obs.observe(el);
-    return () => obs.disconnect();
-  }, []);
+    setPan({ x: 0, y: 0 });
+    setScale(1);
+  }, [focusUuid]);
 
   const focusNode = nodeMap.get(focusUuid);
 
@@ -142,8 +178,6 @@ export function Sunburst() {
       const eff =
         ((midAngle + rotation) % (2 * Math.PI) + 2 * Math.PI) %
         (2 * Math.PI);
-      // Flip when the label sits on the left half of the wheel — transitions
-      // happen at 12 o'clock and 6 o'clock (the vertical axis).
       const flip = eff >= Math.PI;
 
       const baseTextRot = (midAngle * 180) / Math.PI - 90;
@@ -164,8 +198,6 @@ export function Sunburst() {
               : 10;
 
       const fullLabel = humanize(d.data.key);
-      // Allow a bit of overflow past the ring height so labels aren't clipped
-      // too aggressively, but cap with an ellipsis for very long names.
       const label = isFocus
         ? fullLabel
         : fitLabel(fullLabel, ringHeight * 1.4, fontSize);
@@ -192,10 +224,6 @@ export function Sunburst() {
     });
   }, [partitionData, activeFilter, rotation]);
 
-  // Radial dividers that visually group descendants under the same top-level
-  // branch. We draw a line at every depth-1 sibling boundary, extending from
-  // that branch's inner radius all the way out, so deeply nested arcs can be
-  // traced back to the parent wedge they belong to.
   const branchDividers: BranchDivider[] = useMemo(() => {
     if (!partitionData) return [];
     const totalDepth = (partitionData.height ?? 0) + 1;
@@ -218,6 +246,33 @@ export function Sunburst() {
     return divs;
   }, [partitionData]);
 
+  // Native wheel handler: pinch-zoom (ctrl/meta) vs pan (plain wheel).
+  // Attached non-passive so we can preventDefault and stop the page scroll.
+  useEffect(() => {
+    const svg = svgRef.current;
+    if (!svg) return;
+    const handler = (e: WheelEvent) => {
+      e.preventDefault();
+      // Trackpad pinch and Ctrl+wheel both arrive with ctrlKey=true (the
+      // browser synthesises ctrlKey for pinches); meta is a Mac convenience.
+      if (e.ctrlKey || e.metaKey) {
+        const factor = Math.exp(-e.deltaY * 0.01);
+        zoomAroundClient(e.clientX, e.clientY, factor);
+      } else {
+        // Plain wheel / two-finger drag = pan. Use the SVG/world unit ratio
+        // so the content tracks the cursor at any zoom level.
+        const u = clientPxToSvgUnit();
+        setPan((p) => ({
+          x: p.x - e.deltaX * u,
+          y: p.y - e.deltaY * u,
+        }));
+      }
+    };
+    svg.addEventListener("wheel", handler, { passive: false });
+    return () => svg.removeEventListener("wheel", handler);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   if (!partitionData || !focusNode) {
     return <div className="empty-state">No data — try resetting in Settings.</div>;
   }
@@ -235,68 +290,236 @@ export function Sunburst() {
     }
   }
 
-  function getMouseAngle(clientX: number, clientY: number): number | null {
-    if (!svgRef.current) return null;
-    const r = svgRef.current.getBoundingClientRect();
-    const cx = r.left + r.width / 2;
-    const cy = r.top + r.height / 2;
-    return Math.atan2(clientY - cy, clientX - cx);
+  // -- coordinate helpers ----------------------------------------------------
+  function clientToSvg(clientX: number, clientY: number): { x: number; y: number } | null {
+    const svg = svgRef.current;
+    if (!svg) return null;
+    const ctm = svg.getScreenCTM();
+    if (!ctm) return null;
+    const pt = svg.createSVGPoint();
+    pt.x = clientX;
+    pt.y = clientY;
+    const local = pt.matrixTransform(ctm.inverse());
+    return { x: local.x, y: local.y };
   }
 
-  function onPointerDown(e: React.PointerEvent<SVGSVGElement>) {
-    if (e.button !== 0) return;
-    const angle = getMouseAngle(e.clientX, e.clientY);
-    if (angle === null) return;
-    dragRef.current = {
-      startMouseAngle: angle,
-      startRotation: rotation,
-      dragged: false,
-      pointerId: e.pointerId,
+  function svgToWorld(p: { x: number; y: number }): { x: number; y: number } {
+    return {
+      x: (p.x - panRef.current.x) / scaleRef.current,
+      y: (p.y - panRef.current.y) / scaleRef.current,
     };
   }
 
+  function clientPxToSvgUnit(): number {
+    const svg = svgRef.current;
+    if (!svg) return 1;
+    const r = svg.getBoundingClientRect();
+    if (r.width === 0) return 1;
+    return VIEW / r.width;
+  }
+
+  function zoomAroundClient(clientX: number, clientY: number, factor: number) {
+    const svgPt = clientToSvg(clientX, clientY);
+    if (!svgPt) return;
+    const oldScale = scaleRef.current;
+    const newScale = clamp(oldScale * factor, MIN_SCALE, MAX_SCALE);
+    if (newScale === oldScale) return;
+    const worldX = (svgPt.x - panRef.current.x) / oldScale;
+    const worldY = (svgPt.y - panRef.current.y) / oldScale;
+    const newPan = {
+      x: svgPt.x - newScale * worldX,
+      y: svgPt.y - newScale * worldY,
+    };
+    setScale(newScale);
+    setPan(newPan);
+  }
+
+  function angleAtClient(clientX: number, clientY: number): number | null {
+    const svgPt = clientToSvg(clientX, clientY);
+    if (!svgPt) return null;
+    const w = svgToWorld(svgPt);
+    return Math.atan2(w.y, w.x);
+  }
+
+  function distanceFromCenter(clientX: number, clientY: number): number {
+    const svgPt = clientToSvg(clientX, clientY);
+    if (!svgPt) return Infinity;
+    const w = svgToWorld(svgPt);
+    return Math.hypot(w.x, w.y);
+  }
+
+  // -- pointer interactions --------------------------------------------------
+  function startPinch(idA: number, idB: number) {
+    const a = pointers.current.get(idA);
+    const b = pointers.current.get(idB);
+    if (!a || !b) return;
+    const midClientX = (a.clientX + b.clientX) / 2;
+    const midClientY = (a.clientY + b.clientY) / 2;
+    const startDist = Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY);
+    const svgMid = clientToSvg(midClientX, midClientY);
+    if (!svgMid) return;
+    const world = svgToWorld(svgMid);
+    interactionRef.current = {
+      kind: "pinch",
+      pointerIdA: idA,
+      pointerIdB: idB,
+      startDist: Math.max(1, startDist),
+      startScale: scaleRef.current,
+      startWorld: world,
+    };
+    wasDragged.current = true;
+  }
+
+  function onPointerDown(e: React.PointerEvent<SVGSVGElement>) {
+    // Ignore non-primary mouse buttons; allow touch and pen by default.
+    if (e.pointerType === "mouse" && e.button !== 0) return;
+    pointers.current.set(e.pointerId, { clientX: e.clientX, clientY: e.clientY });
+    try {
+      svgRef.current?.setPointerCapture(e.pointerId);
+    } catch {
+      // ignore
+    }
+
+    if (pointers.current.size >= 2) {
+      const ids = Array.from(pointers.current.keys()).slice(0, 2);
+      startPinch(ids[0], ids[1]);
+      return;
+    }
+
+    // Single pointer: rotate when the press lands on the wheel ring,
+    // pan when it lands in the surrounding margin.
+    const dist = distanceFromCenter(e.clientX, e.clientY);
+    if (dist <= RADIUS) {
+      const a = angleAtClient(e.clientX, e.clientY);
+      if (a === null) return;
+      interactionRef.current = {
+        kind: "rotate",
+        pointerId: e.pointerId,
+        startMouseAngle: a,
+        startRotation: rotationRef.current,
+        moved: false,
+      };
+    } else {
+      interactionRef.current = {
+        kind: "pan",
+        pointerId: e.pointerId,
+        startClientX: e.clientX,
+        startClientY: e.clientY,
+        startPan: { ...panRef.current },
+        moved: false,
+      };
+    }
+  }
+
   function onPointerMove(e: React.PointerEvent<SVGSVGElement>) {
-    const drag = dragRef.current;
-    if (!drag || drag.pointerId !== e.pointerId) return;
-    const angle = getMouseAngle(e.clientX, e.clientY);
-    if (angle === null) return;
-    let delta = angle - drag.startMouseAngle;
-    if (delta > Math.PI) delta -= 2 * Math.PI;
-    if (delta < -Math.PI) delta += 2 * Math.PI;
-    if (Math.abs(delta) > DRAG_THRESHOLD_RAD) {
-      if (!drag.dragged) {
-        drag.dragged = true;
-        try {
-          svgRef.current?.setPointerCapture(e.pointerId);
-        } catch {
-          // ignore
-        }
+    if (!pointers.current.has(e.pointerId)) return;
+    pointers.current.set(e.pointerId, { clientX: e.clientX, clientY: e.clientY });
+    const inter = interactionRef.current;
+    if (!inter) return;
+
+    if (inter.kind === "pinch") {
+      const a = pointers.current.get(inter.pointerIdA);
+      const b = pointers.current.get(inter.pointerIdB);
+      if (!a || !b) return;
+      const dist = Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY);
+      const midClientX = (a.clientX + b.clientX) / 2;
+      const midClientY = (a.clientY + b.clientY) / 2;
+      const newScale = clamp(
+        inter.startScale * (dist / inter.startDist),
+        MIN_SCALE,
+        MAX_SCALE,
+      );
+      const svgMid = clientToSvg(midClientX, midClientY);
+      if (!svgMid) return;
+      // Keep the world point that started under the midpoint pinned there;
+      // this also produces natural panning while pinching.
+      const newPan = {
+        x: svgMid.x - newScale * inter.startWorld.x,
+        y: svgMid.y - newScale * inter.startWorld.y,
+      };
+      setScale(newScale);
+      setPan(newPan);
+      return;
+    }
+
+    if (inter.kind === "rotate" && inter.pointerId === e.pointerId) {
+      const a = angleAtClient(e.clientX, e.clientY);
+      if (a === null) return;
+      let delta = a - inter.startMouseAngle;
+      if (delta > Math.PI) delta -= 2 * Math.PI;
+      if (delta < -Math.PI) delta += 2 * Math.PI;
+      if (Math.abs(delta) > DRAG_THRESHOLD_RAD) {
+        inter.moved = true;
+        setRotation(inter.startRotation + delta);
       }
-      setRotation(drag.startRotation + delta);
+      return;
+    }
+
+    if (inter.kind === "pan" && inter.pointerId === e.pointerId) {
+      const dx = e.clientX - inter.startClientX;
+      const dy = e.clientY - inter.startClientY;
+      if (!inter.moved && Math.hypot(dx, dy) < DRAG_THRESHOLD_PX) return;
+      inter.moved = true;
+      const u = clientPxToSvgUnit();
+      setPan({
+        x: inter.startPan.x + dx * u,
+        y: inter.startPan.y + dy * u,
+      });
     }
   }
 
   function onPointerUp(e: React.PointerEvent<SVGSVGElement>) {
-    const drag = dragRef.current;
-    if (drag && drag.pointerId === e.pointerId) {
-      if (drag.dragged) wasDragged.current = true;
-      dragRef.current = null;
-      try {
-        svgRef.current?.releasePointerCapture(e.pointerId);
-      } catch {
-        // ignore
-      }
+    pointers.current.delete(e.pointerId);
+    try {
+      svgRef.current?.releasePointerCapture(e.pointerId);
+    } catch {
+      // ignore
     }
-  }
 
-  function onWheel(e: React.WheelEvent<SVGSVGElement>) {
-    if (!e.ctrlKey && !e.metaKey && e.shiftKey) {
-      // Allow Shift+wheel to scroll horizontally if needed
+    const inter = interactionRef.current;
+    if (!inter) return;
+
+    if (inter.kind === "pinch") {
+      // If a finger lifted, fall back to single-pointer interaction with the
+      // remaining one (or end the gesture if none remain).
+      const remaining = Array.from(pointers.current.entries())[0];
+      if (remaining) {
+        const [pid, p] = remaining;
+        const dist = distanceFromCenter(p.clientX, p.clientY);
+        if (dist <= RADIUS) {
+          const a = angleAtClient(p.clientX, p.clientY);
+          interactionRef.current = a === null
+            ? null
+            : {
+                kind: "rotate",
+                pointerId: pid,
+                startMouseAngle: a,
+                startRotation: rotationRef.current,
+                moved: true,
+              };
+        } else {
+          interactionRef.current = {
+            kind: "pan",
+            pointerId: pid,
+            startClientX: p.clientX,
+            startClientY: p.clientY,
+            startPan: { ...panRef.current },
+            moved: true,
+          };
+        }
+      } else {
+        interactionRef.current = null;
+      }
       return;
     }
-    e.preventDefault();
-    const delta = -e.deltaY * 0.0015;
-    setScale((s) => clamp(s + delta * s, MIN_SCALE, MAX_SCALE));
+
+    if (
+      (inter.kind === "rotate" || inter.kind === "pan") &&
+      inter.pointerId === e.pointerId
+    ) {
+      if (inter.moved) wasDragged.current = true;
+      interactionRef.current = null;
+    }
   }
 
   function consumeDragFlag(): boolean {
@@ -336,6 +559,22 @@ export function Sunburst() {
     }, DOUBLE_CLICK_MS);
   }
 
+  function resetView() {
+    setScale(1);
+    setPan({ x: 0, y: 0 });
+    setRotation(0);
+  }
+
+  function bumpZoom(factor: number) {
+    const svg = svgRef.current;
+    if (!svg) {
+      setScale((s) => clamp(s * factor, MIN_SCALE, MAX_SCALE));
+      return;
+    }
+    const r = svg.getBoundingClientRect();
+    zoomAroundClient(r.left + r.width / 2, r.top + r.height / 2, factor);
+  }
+
   const rotationDeg = (rotation * 180) / Math.PI;
 
   const arcGenForSelection = d3arc<HierarchyRectangularNode<TreeNode>>()
@@ -357,8 +596,13 @@ export function Sunburst() {
     (it) => it.uuid === selectedUuid && !it.isFocus,
   );
 
+  const isPanning = interactionRef.current?.kind === "pan";
+  const isRotating = interactionRef.current?.kind === "rotate";
+  const viewDirty =
+    scale !== 1 || pan.x !== 0 || pan.y !== 0 || rotation !== 0;
+
   return (
-    <div className="sunburst-wrap">
+    <div className="sunburst-wrap" ref={wrapRef}>
       <div className="sunburst-breadcrumb">
         {breadcrumb.length > 1 ? (
           breadcrumb.map((n, i) => (
@@ -378,12 +622,12 @@ export function Sunburst() {
           ))
         ) : (
           <span>
-            Click to cycle ratings · double-click to clear · drag to rotate ·
-            scroll to zoom
+            Click to cycle ratings · drag the wheel to rotate · drag outside to
+            pan · pinch or Ctrl+scroll to zoom
           </span>
         )}
       </div>
-      <div className="sunburst-scroll" ref={scrollRef}>
+      <div className="sunburst-stage">
         <svg
           ref={svgRef}
           viewBox={`${-VIEW / 2} ${-VIEW / 2} ${VIEW} ${VIEW}`}
@@ -391,123 +635,113 @@ export function Sunburst() {
           onPointerMove={onPointerMove}
           onPointerUp={onPointerUp}
           onPointerCancel={onPointerUp}
-          onWheel={onWheel}
-          style={{
-            touchAction: "none",
-            width: Math.max(
-              260,
-              Math.min(containerSize.w, containerSize.h) * scale,
-            ),
-            height: Math.max(
-              260,
-              Math.min(containerSize.w, containerSize.h) * scale,
-            ),
-            maxWidth: "none",
-            flex: "none",
-          }}
+          className={
+            isPanning
+              ? "sunburst-svg panning"
+              : isRotating
+                ? "sunburst-svg rotating"
+                : "sunburst-svg"
+          }
         >
           <g
-            className={dragRef.current ? "spinning" : "spinnable"}
-            transform={`rotate(${rotationDeg.toFixed(3)})`}
+            transform={`translate(${pan.x.toFixed(2)} ${pan.y.toFixed(2)}) scale(${scale.toFixed(4)})`}
           >
-            {/* Pass 1: arc fills with the rate-on-click handler */}
-            {renderItems.map((it) => (
-              <g
-                key={`arc-${it.uuid}`}
-                style={{ opacity: it.dimmed ? 0.18 : 1 }}
-                onClick={(e) => {
-                  e.stopPropagation();
-                  handleArcClick(it);
-                }}
-              >
-                <path
-                  d={it.arcPath}
-                  fill={it.fill}
-                  className={`sunburst-arc${it.depth === 1 ? " top-level" : ""}`}
-                >
-                  <title>
-                    {it.fullLabel}
-                    {it.note ? ` — ${it.note}` : ""}
-                  </title>
-                </path>
-              </g>
-            ))}
-
-            {/* Radial dividers between top-level branches — drawn after arcs
-                so they are visible across all nested rings. */}
-            {branchDividers.map((div) => {
-              const sx = Math.sin(div.angle) * div.innerR;
-              const sy = -Math.cos(div.angle) * div.innerR;
-              const ex = Math.sin(div.angle) * div.outerR;
-              const ey = -Math.cos(div.angle) * div.outerR;
-              return (
-                <line
-                  key={div.key}
-                  x1={sx}
-                  y1={sy}
-                  x2={ex}
-                  y2={ey}
-                  className="sunburst-branch-divider"
-                  pointerEvents="none"
-                />
-              );
-            })}
-
-            {/* Pass 2: labels — rendered on top so arcs never obscure text.
-                Each label is wrapped in its own clickable <g> so clicks on a
-                visible label always go to that label's arc, even if the text
-                visually overlaps a neighbouring arc. */}
-            {renderItems.map((it) =>
-              it.isFocus ? (
-                <text
-                  key={`label-${it.uuid}`}
-                  className="sunburst-label sunburst-center"
-                  style={{ fontSize: 16, fontWeight: 600 }}
-                  transform={`rotate(${(-rotationDeg).toFixed(3)})`}
-                  pointerEvents="none"
-                >
-                  {focusParent ? "↑" : "·"}
-                </text>
-              ) : it.showLabel ? (
+            <g
+              className={isRotating ? "spinning" : "spinnable"}
+              transform={`rotate(${rotationDeg.toFixed(3)})`}
+            >
+              {renderItems.map((it) => (
                 <g
-                  key={`label-${it.uuid}`}
+                  key={`arc-${it.uuid}`}
                   style={{ opacity: it.dimmed ? 0.18 : 1 }}
                   onClick={(e) => {
                     e.stopPropagation();
                     handleArcClick(it);
                   }}
                 >
-                  <text
-                    className="sunburst-label"
-                    transform={`translate(${it.lx},${it.ly}) rotate(${it.textRot})`}
-                    style={{ fontSize: it.fontSize }}
+                  <path
+                    d={it.arcPath}
+                    fill={it.fill}
+                    className={`sunburst-arc${it.depth === 1 ? " top-level" : ""}`}
                   >
                     <title>
                       {it.fullLabel}
                       {it.note ? ` — ${it.note}` : ""}
                     </title>
-                    {it.label}
-                  </text>
+                  </path>
                 </g>
-              ) : null,
-            )}
+              ))}
 
-            {selectedItem && (
-              <path
-                d={arcGenForSelection(selectedItem.d) ?? ""}
-                fill="none"
-                stroke="white"
-                strokeWidth={2}
-                pointerEvents="none"
-              />
-            )}
+              {branchDividers.map((div) => {
+                const sx = Math.sin(div.angle) * div.innerR;
+                const sy = -Math.cos(div.angle) * div.innerR;
+                const ex = Math.sin(div.angle) * div.outerR;
+                const ey = -Math.cos(div.angle) * div.outerR;
+                return (
+                  <line
+                    key={div.key}
+                    x1={sx}
+                    y1={sy}
+                    x2={ex}
+                    y2={ey}
+                    className="sunburst-branch-divider"
+                    pointerEvents="none"
+                  />
+                );
+              })}
+
+              {renderItems.map((it) =>
+                it.isFocus ? (
+                  <text
+                    key={`label-${it.uuid}`}
+                    className="sunburst-label sunburst-center"
+                    style={{ fontSize: 16, fontWeight: 600 }}
+                    transform={`rotate(${(-rotationDeg).toFixed(3)})`}
+                    pointerEvents="none"
+                  >
+                    {focusParent ? "↑" : "·"}
+                  </text>
+                ) : it.showLabel ? (
+                  <g
+                    key={`label-${it.uuid}`}
+                    style={{ opacity: it.dimmed ? 0.18 : 1 }}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      handleArcClick(it);
+                    }}
+                  >
+                    <text
+                      className="sunburst-label"
+                      transform={`translate(${it.lx},${it.ly}) rotate(${it.textRot})`}
+                      style={{ fontSize: it.fontSize }}
+                    >
+                      <title>
+                        {it.fullLabel}
+                        {it.note ? ` — ${it.note}` : ""}
+                      </title>
+                      {it.label}
+                    </text>
+                  </g>
+                ) : null,
+              )}
+
+              {selectedItem && (
+                <path
+                  d={arcGenForSelection(selectedItem.d) ?? ""}
+                  fill="none"
+                  stroke="white"
+                  strokeWidth={2}
+                  pointerEvents="none"
+                />
+              )}
+            </g>
           </g>
         </svg>
       </div>
       <div className="sunburst-controls">
         <button
           className="btn"
-          onClick={() => setScale((s) => clamp(s - 0.15, MIN_SCALE, MAX_SCALE))}
+          onClick={() => bumpZoom(1 / 1.2)}
           disabled={scale <= MIN_SCALE + 0.001}
           aria-label="Zoom out"
         >
@@ -515,26 +749,20 @@ export function Sunburst() {
         </button>
         <button
           className="btn"
-          onClick={() => setScale(1)}
-          disabled={scale === 1}
-        >
-          {Math.round(scale * 100)}%
-        </button>
-        <button
-          className="btn"
-          onClick={() => setScale((s) => clamp(s + 0.15, MIN_SCALE, MAX_SCALE))}
+          onClick={() => bumpZoom(1.2)}
           disabled={scale >= MAX_SCALE - 0.001}
           aria-label="Zoom in"
         >
           +
         </button>
-        {rotation !== 0 && (
+        <span className="sunburst-zoom-readout">{Math.round(scale * 100)}%</span>
+        {viewDirty && (
           <button
             className="btn ghost"
             style={{ marginLeft: 8 }}
-            onClick={() => setRotation(0)}
+            onClick={resetView}
           >
-            ↺ Reset rotation
+            ↺ Reset view
           </button>
         )}
       </div>
