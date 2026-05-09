@@ -763,5 +763,50 @@
     "uuid": "342b9cc4-f6eb-11ec-b939-0242ac120002",
     "parentUuid": "342ba75a-f6eb-11ec-b939-0242ac120002",
     "key": "whenever"
+  },
+  {
+    "uuid": "1d4f2fa0-1f4d-4a1c-9c36-1f9d3b8e3a01",
+    "parentUuid": "342b55ac-f6eb-11ec-b939-0242ac120002",
+    "key": "having_no_fluid_boundary"
+  },
+  {
+    "uuid": "1d4f2fa0-1f4d-4a1c-9c36-1f9d3b8e3a02",
+    "parentUuid": "342b55ac-f6eb-11ec-b939-0242ac120002",
+    "key": "moresomes"
+  },
+  {
+    "uuid": "1d4f2fa0-1f4d-4a1c-9c36-1f9d3b8e3a03",
+    "parentUuid": "342b55ac-f6eb-11ec-b939-0242ac120002",
+    "key": "play_parties"
+  },
+  {
+    "uuid": "1d4f2fa0-1f4d-4a1c-9c36-1f9d3b8e3a04",
+    "parentUuid": "342b4d3c-f6eb-11ec-b939-0242ac120002",
+    "key": "non_monogamy"
+  },
+  {
+    "uuid": "1d4f2fa0-1f4d-4a1c-9c36-1f9d3b8e3a05",
+    "parentUuid": "1d4f2fa0-1f4d-4a1c-9c36-1f9d3b8e3a04",
+    "key": "meeting_metamours"
+  },
+  {
+    "uuid": "1d4f2fa0-1f4d-4a1c-9c36-1f9d3b8e3a06",
+    "parentUuid": "1d4f2fa0-1f4d-4a1c-9c36-1f9d3b8e3a04",
+    "key": "kitchen_table_poly"
+  },
+  {
+    "uuid": "1d4f2fa0-1f4d-4a1c-9c36-1f9d3b8e3a07",
+    "parentUuid": "1d4f2fa0-1f4d-4a1c-9c36-1f9d3b8e3a04",
+    "key": "parallel_poly"
+  },
+  {
+    "uuid": "1d4f2fa0-1f4d-4a1c-9c36-1f9d3b8e3a08",
+    "parentUuid": "342b5124-f6eb-11ec-b939-0242ac120002",
+    "key": "research"
+  },
+  {
+    "uuid": "1d4f2fa0-1f4d-4a1c-9c36-1f9d3b8e3a09",
+    "parentUuid": "342b5d5e-f6eb-11ec-b939-0242ac120002",
+    "key": "having_a_key"
   }
  ]

@@ -50,7 +50,16 @@ interface RenderItem {
   ly: number;
   textRot: number;
   fontSize: number;
+  depth: number;
   d: HierarchyRectangularNode<TreeNode>;
+}
+
+interface BranchDivider {
+  key: string;
+  angle: number;
+  innerR: number;
+  outerR: number;
+  topLevel: boolean;
 }
 
 export function Sunburst() {
@@ -177,10 +186,37 @@ export function Sunburst() {
         ly,
         textRot,
         fontSize,
+        depth: d.depth,
         d,
       };
     });
   }, [partitionData, activeFilter, rotation]);
+
+  // Radial dividers that visually group descendants under the same top-level
+  // branch. We draw a line at every depth-1 sibling boundary, extending from
+  // that branch's inner radius all the way out, so deeply nested arcs can be
+  // traced back to the parent wedge they belong to.
+  const branchDividers: BranchDivider[] = useMemo(() => {
+    if (!partitionData) return [];
+    const totalDepth = (partitionData.height ?? 0) + 1;
+    const ringWidth = RADIUS / totalDepth;
+    const divs: BranchDivider[] = [];
+    const topLevel = partitionData
+      .descendants()
+      .filter((d) => d.depth === 1)
+      .sort((a, b) => a.x0 - b.x0);
+    if (topLevel.length <= 1) return [];
+    for (const d of topLevel) {
+      divs.push({
+        key: `tl-${d.data.uuid}`,
+        angle: d.x0,
+        innerR: d.y0 * ringWidth,
+        outerR: RADIUS,
+        topLevel: true,
+      });
+    }
+    return divs;
+  }, [partitionData]);
 
   if (!partitionData || !focusNode) {
     return <div className="empty-state">No data — try resetting in Settings.</div>;
@@ -384,7 +420,11 @@ export function Sunburst() {
                   handleArcClick(it);
                 }}
               >
-                <path d={it.arcPath} fill={it.fill} className="sunburst-arc">
+                <path
+                  d={it.arcPath}
+                  fill={it.fill}
+                  className={`sunburst-arc${it.depth === 1 ? " top-level" : ""}`}
+                >
                   <title>
                     {it.fullLabel}
                     {it.note ? ` — ${it.note}` : ""}
@@ -392,6 +432,26 @@ export function Sunburst() {
                 </path>
               </g>
             ))}
+
+            {/* Radial dividers between top-level branches — drawn after arcs
+                so they are visible across all nested rings. */}
+            {branchDividers.map((div) => {
+              const sx = Math.sin(div.angle) * div.innerR;
+              const sy = -Math.cos(div.angle) * div.innerR;
+              const ex = Math.sin(div.angle) * div.outerR;
+              const ey = -Math.cos(div.angle) * div.outerR;
+              return (
+                <line
+                  key={div.key}
+                  x1={sx}
+                  y1={sy}
+                  x2={ex}
+                  y2={ey}
+                  className="sunburst-branch-divider"
+                  pointerEvents="none"
+                />
+              );
+            })}
 
             {/* Pass 2: labels — rendered on top so arcs never obscure text.
                 Each label is wrapped in its own clickable <g> so clicks on a
