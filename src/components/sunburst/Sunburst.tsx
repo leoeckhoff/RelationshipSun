@@ -370,21 +370,31 @@ export function Sunburst() {
     wasDragged.current = true;
   }
 
+  function capturePointer(id: number) {
+    try {
+      svgRef.current?.setPointerCapture(id);
+    } catch {
+      // ignore
+    }
+  }
+
   function onPointerDown(e: React.PointerEvent<SVGSVGElement>) {
     // Ignore non-primary mouse buttons; allow touch and pen by default.
     if (e.pointerType === "mouse" && e.button !== 0) return;
     pointers.current.set(e.pointerId, { clientX: e.clientX, clientY: e.clientY });
-    try {
-      svgRef.current?.setPointerCapture(e.pointerId);
-    } catch {
-      // ignore
-    }
 
     if (pointers.current.size >= 2) {
       const ids = Array.from(pointers.current.keys()).slice(0, 2);
+      // A pinch is a real gesture immediately, so capture both pointers
+      // now so they can drift outside the SVG without losing tracking.
+      capturePointer(ids[0]);
+      capturePointer(ids[1]);
       startPinch(ids[0], ids[1]);
       return;
     }
+    // Single-pointer: don't capture yet — capture would steal the click
+    // that follows pointerup, breaking arc rate-cycle clicks. We capture
+    // on first move once the drag threshold is exceeded.
 
     // Single pointer: rotate when the press lands on the wheel ring,
     // pan when it lands in the surrounding margin.
@@ -449,6 +459,7 @@ export function Sunburst() {
       if (delta > Math.PI) delta -= 2 * Math.PI;
       if (delta < -Math.PI) delta += 2 * Math.PI;
       if (Math.abs(delta) > DRAG_THRESHOLD_RAD) {
+        if (!inter.moved) capturePointer(e.pointerId);
         inter.moved = true;
         setRotation(inter.startRotation + delta);
       }
@@ -459,6 +470,7 @@ export function Sunburst() {
       const dx = e.clientX - inter.startClientX;
       const dy = e.clientY - inter.startClientY;
       if (!inter.moved && Math.hypot(dx, dy) < DRAG_THRESHOLD_PX) return;
+      if (!inter.moved) capturePointer(e.pointerId);
       inter.moved = true;
       const u = clientPxToSvgUnit();
       setPan({
