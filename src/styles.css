@@ -944,9 +944,14 @@ button {
   outline-offset: 1px;
 }
 
-.compare-row .chip .chip-missing {
+.compare-row .chip.chip-needs-adopt .chip-select {
+  border-style: dashed;
   color: var(--text-dim);
+}
+
+.compare-row .chip.chip-needs-adopt .chip-label {
   font-style: italic;
+  color: var(--text-dim);
 }
 
 .empty-state {

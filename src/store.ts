@@ -40,7 +40,12 @@ interface AppState {
   setView: (v: View) => void;
   selectNode: (uuid: string | null) => void;
   setNodeState: (uuid: string, state: State) => void;
-  setNodeStateFor: (profileId: string, uuid: string, state: State) => void;
+  setNodeStateFor: (
+    profileId: string,
+    uuid: string,
+    state: State,
+    copyFromProfileId?: string,
+  ) => void;
   setNodeNote: (uuid: string, note: string) => void;
   addChild: (parentUuid: string, key: string) => void;
   requestDelete: (uuid: string) => void;
@@ -148,18 +153,53 @@ export const useAppStore = create<AppState>((set, get) => ({
     get().setNodeStateFor(activeProfileId, uuid, state);
   },
 
-  setNodeStateFor: (profileId, uuid, state) => {
+  setNodeStateFor: (profileId, uuid, state, copyFromProfileId) => {
     const { profiles, activeProfileId } = get();
-    const newProfiles = profiles.map((p) =>
-      p.id !== profileId
-        ? p
-        : {
-            ...p,
-            nodes: p.nodes.map((n) =>
-              n.uuid === uuid ? { ...n, state } : n,
-            ),
-          },
-    );
+    const source =
+      copyFromProfileId && copyFromProfileId !== profileId
+        ? profiles.find((p) => p.id === copyFromProfileId)
+        : undefined;
+    const newProfiles = profiles.map((p) => {
+      if (p.id !== profileId) return p;
+      const has = p.nodes.some((n) => n.uuid === uuid);
+      if (has) {
+        return {
+          ...p,
+          nodes: p.nodes.map((n) =>
+            n.uuid === uuid ? { ...n, state } : n,
+          ),
+        };
+      }
+      // Target doesn't have the node yet. If a source profile is provided,
+      // copy the node and any missing ancestors over so the rating has a
+      // place to live in the target tree.
+      if (!source) return p;
+      const sourceById = new Map(source.nodes.map((n) => [n.uuid, n]));
+      const targetIds = new Set(p.nodes.map((n) => n.uuid));
+      const toAdd: NodeRecord[] = [];
+      let cur: string | undefined = uuid;
+      while (cur && !targetIds.has(cur)) {
+        const sn = sourceById.get(cur);
+        if (!sn) break;
+        toAdd.push(sn);
+        cur = sn.parentUuid || undefined;
+      }
+      if (toAdd.length === 0) return p;
+      // Order ancestors before descendants when appending.
+      toAdd.reverse();
+      const appended: NodeRecord[] = toAdd.map((sn) => ({
+        uuid: sn.uuid,
+        parentUuid: sn.parentUuid,
+        key: sn.key,
+        // Only the explicitly-rated leaf gets the requested state; any
+        // ancestors we had to copy in along the way stay UNSET in the
+        // target profile so we don't fabricate ratings the user didn't
+        // make.
+        state: sn.uuid === uuid ? state : "UNSET",
+        ...(sn.custom ? { custom: true } : {}),
+      }));
+      return { ...p, nodes: [...p.nodes, ...appended] };
+    });
     persistActive(newProfiles);
     const active = pickActive(newProfiles, activeProfileId);
     set({ profiles: newProfiles, nodes: active.nodes });

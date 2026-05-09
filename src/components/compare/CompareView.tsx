@@ -267,6 +267,13 @@ export function CompareView() {
       (p.mine === "UNSET" || p.theirs === "UNSET"),
   );
 
+  const sectionProps: SectionProps = {
+    myId: activeProfileId,
+    theirId: partnerProfile.id,
+    onSelect: selectNode,
+    onSetState: setNodeStateFor,
+  };
+
   return (
     <div className="compare">
       <div className="compare-header">
@@ -305,69 +312,61 @@ export function CompareView() {
         title={`Conflicts (${conflicts.length})`}
         muted="Where one of you says hard no and the other wants it."
         rows={conflicts}
-        myId={activeProfileId}
-        theirId={partnerProfile.id}
-        onSelect={selectNode}
-        onSetState={setNodeStateFor}
+        sectionProps={sectionProps}
       />
       <Section
         title={`Discuss (${discuss.length})`}
         muted="At least one of you said “unsure / open to discuss”."
         rows={discuss}
-        myId={activeProfileId}
-        theirId={partnerProfile.id}
-        onSelect={selectNode}
-        onSetState={setNodeStateFor}
+        sectionProps={sectionProps}
       />
       <Section
         title={`Wishes (${wishes.length})`}
         muted="One of you would like a change. Worth talking about."
         rows={wishes}
-        myId={activeProfileId}
-        theirId={partnerProfile.id}
-        onSelect={selectNode}
-        onSetState={setNodeStateFor}
+        sectionProps={sectionProps}
       />
       <Section
         title={`Matches (${matches.length})`}
         muted="You both said the same thing."
         rows={matches}
-        myId={activeProfileId}
-        theirId={partnerProfile.id}
-        onSelect={selectNode}
-        onSetState={setNodeStateFor}
+        sectionProps={sectionProps}
       />
       <Section
         title={`One-sided (${oneSided.length})`}
         muted="Only one of you has a rating."
         rows={oneSided}
-        myId={activeProfileId}
-        theirId={partnerProfile.id}
-        onSelect={selectNode}
-        onSetState={setNodeStateFor}
+        sectionProps={sectionProps}
       />
     </div>
   );
+}
+
+interface SectionProps {
+  myId: string;
+  theirId: string;
+  onSelect: (uuid: string) => void;
+  onSetState: (
+    profileId: string,
+    uuid: string,
+    state: State,
+    copyFromProfileId?: string,
+  ) => void;
 }
 
 function Section({
   title,
   muted,
   rows,
-  myId,
-  theirId,
-  onSelect,
-  onSetState,
+  sectionProps,
 }: {
   title: string;
   muted: string;
   rows: Pair[];
-  myId: string;
-  theirId: string;
-  onSelect: (uuid: string) => void;
-  onSetState: (profileId: string, uuid: string, state: State) => void;
+  sectionProps: SectionProps;
 }) {
   if (rows.length === 0) return null;
+  const { myId, theirId, onSelect, onSetState } = sectionProps;
   return (
     <section className="compare-section">
       <h3>{title}</h3>
@@ -417,14 +416,14 @@ function Section({
             <Chip
               label="You"
               state={r.mine}
-              editable={r.mineExists}
-              onChange={(s) => onSetState(myId, r.uuid, s)}
+              exists={r.mineExists}
+              onChange={(s) => onSetState(myId, r.uuid, s, theirId)}
             />
             <Chip
               label="Them"
               state={r.theirs}
-              editable={r.theirExists}
-              onChange={(s) => onSetState(theirId, r.uuid, s)}
+              exists={r.theirExists}
+              onChange={(s) => onSetState(theirId, r.uuid, s, myId)}
             />
           </div>
         );
@@ -436,41 +435,40 @@ function Section({
 function Chip({
   label,
   state,
-  editable,
+  exists,
   onChange,
 }: {
   label: string;
   state: State;
-  editable: boolean;
+  exists: boolean;
   onChange: (s: State) => void;
 }) {
+  const title = exists
+    ? STATE_LABEL[state]
+    : `Not in this profile yet — picking a rating will add it`;
   return (
     <span
-      className={`chip${editable ? " chip-editable" : ""}`}
-      title={editable ? STATE_LABEL[state] : "Not in this person's tree"}
+      className={`chip${exists ? "" : " chip-needs-adopt"}`}
+      title={title}
     >
       <span className="swatch" style={{ background: STATE_COLOR[state] }} />
       <span className="chip-label">{label}:</span>
-      {editable ? (
-        <select
-          className="chip-select"
-          value={state}
-          onClick={(e) => e.stopPropagation()}
-          onChange={(e) => {
-            e.stopPropagation();
-            onChange(e.target.value as State);
-          }}
-          aria-label={`Set ${label} rating`}
-        >
-          {ALL_STATES.map((s) => (
-            <option key={s} value={s}>
-              {STATE_SHORT[s]}
-            </option>
-          ))}
-        </select>
-      ) : (
-        <span className="chip-missing">—</span>
-      )}
+      <select
+        className="chip-select"
+        value={state}
+        onClick={(e) => e.stopPropagation()}
+        onChange={(e) => {
+          e.stopPropagation();
+          onChange(e.target.value as State);
+        }}
+        aria-label={`Set ${label} rating`}
+      >
+        {ALL_STATES.map((s) => (
+          <option key={s} value={s}>
+            {STATE_SHORT[s]}
+          </option>
+        ))}
+      </select>
     </span>
   );
 }
