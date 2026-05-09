@@ -100,11 +100,15 @@ export function Sunburst() {
   const activeFilter = useAppStore((s) => s.activeFilter);
   const focusUuid = useAppStore((s) => s.sunburstFocus);
   const setFocusUuid = useAppStore((s) => s.setSunburstFocus);
+  const openAddChild = useAppStore((s) => s.openAddChild);
+  const requestDelete = useAppStore((s) => s.requestDelete);
   const nodeMap = useNodeMap();
 
   const [rotation, setRotation] = useState(0);
   const [scale, setScale] = useState(1);
   const [pan, setPan] = useState({ x: 0, y: 0 });
+  const [menu, setMenu] = useState<{ uuid: string; x: number; y: number } | null>(null);
+  const [hover, setHover] = useState<{ uuid: string; x: number; y: number } | null>(null);
   const svgRef = useRef<SVGSVGElement | null>(null);
   const wrapRef = useRef<HTMLDivElement | null>(null);
 
@@ -140,7 +144,19 @@ export function Sunburst() {
   useEffect(() => {
     setPan({ x: 0, y: 0 });
     setScale(1);
+    setMenu(null);
+    setHover(null);
   }, [focusUuid]);
+
+  // Close the context menu on Escape.
+  useEffect(() => {
+    if (!menu) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setMenu(null);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [menu]);
 
   const focusNode = nodeMap.get(focusUuid);
 
@@ -381,6 +397,8 @@ export function Sunburst() {
   function onPointerDown(e: React.PointerEvent<SVGSVGElement>) {
     // Ignore non-primary mouse buttons; allow touch and pen by default.
     if (e.pointerType === "mouse" && e.button !== 0) return;
+    setHover(null);
+    setMenu(null);
     pointers.current.set(e.pointerId, { clientX: e.clientX, clientY: e.clientY });
 
     if (pointers.current.size >= 2) {
@@ -577,6 +595,39 @@ export function Sunburst() {
     setRotation(0);
   }
 
+  function openMenuFor(uuid: string, clientX: number, clientY: number) {
+    setHover(null);
+    setMenu({ uuid, x: clientX, y: clientY });
+  }
+
+  function arcInteractionHandlers(it: RenderItem) {
+    return {
+      onContextMenu: (e: React.MouseEvent) => {
+        e.preventDefault();
+        e.stopPropagation();
+        openMenuFor(it.uuid, e.clientX, e.clientY);
+      },
+      onMouseEnter: (e: React.MouseEvent) => {
+        if (interactionRef.current) return;
+        setHover({ uuid: it.uuid, x: e.clientX, y: e.clientY });
+      },
+      onMouseMove: (e: React.MouseEvent) => {
+        if (interactionRef.current) return;
+        setHover((prev) =>
+          prev && prev.uuid === it.uuid && prev.x === e.clientX && prev.y === e.clientY
+            ? prev
+            : { uuid: it.uuid, x: e.clientX, y: e.clientY },
+        );
+      },
+      onMouseLeave: () => {
+        setHover((prev) => (prev && prev.uuid === it.uuid ? null : prev));
+      },
+    };
+  }
+
+  const hoverItem = hover ? renderItems.find((it) => it.uuid === hover.uuid) : null;
+  const menuItem = menu ? renderItems.find((it) => it.uuid === menu.uuid) : null;
+
   function bumpZoom(factor: number) {
     const svg = svgRef.current;
     if (!svg) {
@@ -634,8 +685,8 @@ export function Sunburst() {
           ))
         ) : (
           <span>
-            Click to cycle ratings · drag the wheel to rotate · drag outside to
-            pan · pinch or Ctrl+scroll to zoom
+            Click to cycle ratings · right-click for more · drag to rotate ·
+            pinch or Ctrl+scroll to zoom
           </span>
         )}
       </div>
@@ -670,17 +721,13 @@ export function Sunburst() {
                     e.stopPropagation();
                     handleArcClick(it);
                   }}
+                  {...arcInteractionHandlers(it)}
                 >
                   <path
                     d={it.arcPath}
                     fill={it.fill}
                     className={`sunburst-arc${it.depth === 1 ? " top-level" : ""}`}
-                  >
-                    <title>
-                      {it.fullLabel}
-                      {it.note ? ` — ${it.note}` : ""}
-                    </title>
-                  </path>
+                  />
                 </g>
               ))}
 
@@ -721,16 +768,13 @@ export function Sunburst() {
                       e.stopPropagation();
                       handleArcClick(it);
                     }}
+                    {...arcInteractionHandlers(it)}
                   >
                     <text
                       className="sunburst-label"
                       transform={`translate(${it.lx},${it.ly}) rotate(${it.textRot})`}
                       style={{ fontSize: it.fontSize }}
                     >
-                      <title>
-                        {it.fullLabel}
-                        {it.note ? ` — ${it.note}` : ""}
-                      </title>
                       {it.label}
                     </text>
                   </g>
@@ -778,6 +822,58 @@ export function Sunburst() {
           </button>
         )}
       </div>
+
+      {hoverItem && !menu && (hoverItem.note || hoverItem.fullLabel !== hoverItem.label) && (
+        <div
+          className="sunburst-tooltip"
+          style={{ left: (hover?.x ?? 0) + 14, top: (hover?.y ?? 0) + 16 }}
+        >
+          <div className="tt-label">{hoverItem.fullLabel}</div>
+          {hoverItem.note && <div className="tt-note">{hoverItem.note}</div>}
+        </div>
+      )}
+
+      {menu && menuItem && (
+        <>
+          <div
+            className="sunburst-menu-backdrop"
+            onClick={() => setMenu(null)}
+            onContextMenu={(e) => {
+              e.preventDefault();
+              setMenu(null);
+            }}
+          />
+          <div
+            className="sunburst-menu"
+            style={{ left: menu.x, top: menu.y }}
+            role="menu"
+          >
+            <div className="sunburst-menu-header">{menuItem.fullLabel}</div>
+            <button
+              type="button"
+              className="sunburst-menu-item"
+              onClick={() => {
+                openAddChild(menu.uuid);
+                setMenu(null);
+              }}
+            >
+              + Add sub-item
+            </button>
+            {menu.uuid !== appRoot && (
+              <button
+                type="button"
+                className="sunburst-menu-item danger"
+                onClick={() => {
+                  requestDelete(menu.uuid);
+                  setMenu(null);
+                }}
+              >
+                Delete
+              </button>
+            )}
+          </div>
+        </>
+      )}
     </div>
   );
 }
