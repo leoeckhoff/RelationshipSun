@@ -6,7 +6,14 @@ import {
 } from "d3-hierarchy";
 import { arc as d3arc } from "d3-shape";
 import { useAppStore, useNodeMap } from "../../store";
-import { STATE_COLOR, nextState, type NodeRecord } from "../../types";
+import {
+  ALL_STATES,
+  STATE_COLOR,
+  STATE_SHORT,
+  nextState,
+  type NodeRecord,
+  type State,
+} from "../../types";
 import { fitLabel, humanize } from "../../util";
 
 type TreeNode = NodeRecord & { children?: TreeNode[] };
@@ -849,6 +856,35 @@ export function Sunburst() {
             role="menu"
           >
             <div className="sunburst-menu-header">{menuItem.fullLabel}</div>
+            {menu.uuid !== appRoot && (
+              <>
+                <div className="sunburst-menu-section">Set rating</div>
+                <div className="sunburst-state-grid">
+                  {ALL_STATES.map((s) => {
+                    const current = menuItem.d.data.state === s;
+                    return (
+                      <button
+                        key={s}
+                        type="button"
+                        className={`sunburst-state-chip${current ? " active" : ""}`}
+                        onClick={() => {
+                          setNodeState(menu.uuid, s as State);
+                          selectNode(menu.uuid);
+                          setMenu(null);
+                        }}
+                      >
+                        <span
+                          className="state-swatch"
+                          style={{ background: STATE_COLOR[s] }}
+                        />
+                        {STATE_SHORT[s]}
+                      </button>
+                    );
+                  })}
+                </div>
+                <div className="sunburst-menu-divider" />
+              </>
+            )}
             <button
               type="button"
               className="sunburst-menu-item"
