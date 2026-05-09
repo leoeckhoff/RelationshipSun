@@ -10,7 +10,6 @@ import {
   ALL_STATES,
   STATE_COLOR,
   STATE_SHORT,
-  nextState,
   type NodeRecord,
   type State,
 } from "../../types";
@@ -39,7 +38,8 @@ const MARGIN = 90; // room for label overflow
 const VIEW = (RADIUS + MARGIN) * 2;
 const DRAG_THRESHOLD_RAD = 0.02;
 const DRAG_THRESHOLD_PX = 4;
-const DOUBLE_CLICK_MS = 260;
+const LONG_PRESS_MS = 500;
+const LONG_PRESS_MOVE_PX = 10;
 const MIN_SCALE = 0.4;
 const MAX_SCALE = 8;
 
@@ -139,13 +139,16 @@ export function Sunburst() {
     new Map(),
   );
   const wasDragged = useRef(false);
-  const clickTimer = useRef<number | null>(null);
+  const longPressTimer = useRef<number | null>(null);
+  const longPressStart = useRef<{ x: number; y: number; pointerId: number } | null>(null);
 
   useEffect(() => {
     if (!nodes.some((n) => n.uuid === focusUuid)) {
       setFocusUuid(appRoot);
     }
   }, [nodes, focusUuid, appRoot, setFocusUuid]);
+
+  useEffect(() => () => clearLongPress(), []);
 
   // Reset pan when focus changes so the new wheel is centred.
   useEffect(() => {
@@ -401,6 +404,27 @@ export function Sunburst() {
     }
   }
 
+  function clearLongPress() {
+    if (longPressTimer.current !== null) {
+      window.clearTimeout(longPressTimer.current);
+      longPressTimer.current = null;
+    }
+    longPressStart.current = null;
+  }
+
+  function findUuidAtPoint(clientX: number, clientY: number): string | null {
+    const els = document.elementsFromPoint(clientX, clientY);
+    for (const el of els) {
+      let cur: Element | null = el;
+      while (cur) {
+        const ds = (cur as HTMLElement | SVGElement).dataset;
+        if (ds && ds.uuid) return ds.uuid;
+        cur = cur.parentElement;
+      }
+    }
+    return null;
+  }
+
   function onPointerDown(e: React.PointerEvent<SVGSVGElement>) {
     // Ignore non-primary mouse buttons; allow touch and pen by default.
     if (e.pointerType === "mouse" && e.button !== 0) return;
@@ -414,12 +438,33 @@ export function Sunburst() {
       // now so they can drift outside the SVG without losing tracking.
       capturePointer(ids[0]);
       capturePointer(ids[1]);
+      clearLongPress();
       startPinch(ids[0], ids[1]);
       return;
     }
     // Single-pointer: don't capture yet — capture would steal the click
-    // that follows pointerup, breaking arc rate-cycle clicks. We capture
-    // on first move once the drag threshold is exceeded.
+    // that follows pointerup, breaking arc selection. We capture on the
+    // first move once the drag threshold is exceeded.
+
+    // Touch long-press opens the right-click menu, which is the canonical
+    // way to expose contextual actions on touch devices.
+    if (e.pointerType === "touch") {
+      const cx = e.clientX;
+      const cy = e.clientY;
+      longPressStart.current = { x: cx, y: cy, pointerId: e.pointerId };
+      longPressTimer.current = window.setTimeout(() => {
+        longPressTimer.current = null;
+        const uuid = findUuidAtPoint(cx, cy);
+        if (!uuid) return;
+        // Suppress the trailing click and any rotate/pan from this gesture.
+        wasDragged.current = true;
+        interactionRef.current = null;
+        if (typeof navigator !== "undefined" && "vibrate" in navigator) {
+          try { navigator.vibrate(15); } catch { /* ignore */ }
+        }
+        setMenu({ uuid, x: cx, y: cy });
+      }, LONG_PRESS_MS);
+    }
 
     // Single pointer: rotate when the press lands on the wheel ring,
     // pan when it lands in the surrounding margin.
@@ -449,6 +494,14 @@ export function Sunburst() {
   function onPointerMove(e: React.PointerEvent<SVGSVGElement>) {
     if (!pointers.current.has(e.pointerId)) return;
     pointers.current.set(e.pointerId, { clientX: e.clientX, clientY: e.clientY });
+
+    const lps = longPressStart.current;
+    if (lps && lps.pointerId === e.pointerId) {
+      const dx = e.clientX - lps.x;
+      const dy = e.clientY - lps.y;
+      if (Math.hypot(dx, dy) > LONG_PRESS_MOVE_PX) clearLongPress();
+    }
+
     const inter = interactionRef.current;
     if (!inter) return;
 
@@ -513,6 +566,10 @@ export function Sunburst() {
       // ignore
     }
 
+    if (longPressStart.current?.pointerId === e.pointerId) {
+      clearLongPress();
+    }
+
     const inter = interactionRef.current;
     if (!inter) return;
 
@@ -570,30 +627,14 @@ export function Sunburst() {
   function handleArcClick(item: RenderItem) {
     if (consumeDragFlag()) return;
 
+    // Left-click only selects the node; rating changes happen via the
+    // right-click / long-press menu, or the side panel.
     if (item.isFocus) {
-      if (clickTimer.current !== null) {
-        window.clearTimeout(clickTimer.current);
-        clickTimer.current = null;
-      }
       if (focusParent) setFocusUuid(focusParent.uuid);
       selectNode(focusUuid);
       return;
     }
-
-    if (clickTimer.current !== null) {
-      window.clearTimeout(clickTimer.current);
-      clickTimer.current = null;
-      selectNode(item.uuid);
-      setNodeState(item.uuid, "UNSET");
-      return;
-    }
-    const uuid = item.uuid;
-    const state = item.d.data.state;
-    clickTimer.current = window.setTimeout(() => {
-      clickTimer.current = null;
-      selectNode(uuid);
-      setNodeState(uuid, nextState(state));
-    }, DOUBLE_CLICK_MS);
+    selectNode(item.uuid);
   }
 
   function resetView() {
@@ -692,8 +733,8 @@ export function Sunburst() {
           ))
         ) : (
           <span>
-            Click to cycle ratings · right-click for more · drag to rotate ·
-            pinch or Ctrl+scroll to zoom
+            Click to select · right-click or long-press to rate · drag to
+            rotate · pinch or Ctrl+scroll to zoom
           </span>
         )}
       </div>
@@ -723,6 +764,7 @@ export function Sunburst() {
               {renderItems.map((it) => (
                 <g
                   key={`arc-${it.uuid}`}
+                  data-uuid={it.uuid}
                   style={{ opacity: it.dimmed ? 0.18 : 1 }}
                   onClick={(e) => {
                     e.stopPropagation();
@@ -770,6 +812,7 @@ export function Sunburst() {
                 ) : it.showLabel ? (
                   <g
                     key={`label-${it.uuid}`}
+                    data-uuid={it.uuid}
                     style={{ opacity: it.dimmed ? 0.18 : 1 }}
                     onClick={(e) => {
                       e.stopPropagation();
