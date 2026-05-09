@@ -2,6 +2,7 @@ import { useMemo, useRef, useState } from "react";
 import { useAppStore } from "../../store";
 import { parseImportData, readFileAsText } from "../../importExport";
 import {
+  ALL_STATES,
   STATE_COLOR,
   STATE_LABEL,
   STATE_SHORT,
@@ -16,6 +17,8 @@ interface Pair {
   pathLabel: string;
   mine: State;
   theirs: State;
+  mineExists: boolean;
+  theirExists: boolean;
   mineNote?: string;
   theirNote?: string;
 }
@@ -46,6 +49,7 @@ export function CompareView() {
   const myNodes = useAppStore((s) => s.nodes);
   const rootUuid = useAppStore((s) => s.rootUuid);
   const selectNode = useAppStore((s) => s.selectNode);
+  const setNodeStateFor = useAppStore((s) => s.setNodeStateFor);
   const addProfile = useAppStore((s) => s.addProfile);
   const setView = useAppStore((s) => s.setView);
 
@@ -107,6 +111,8 @@ export function CompareView() {
         pathLabel: myPaths.get(n.uuid) ?? humanize(n.key),
         mine: n.state,
         theirs: them?.state ?? "UNSET",
+        mineExists: true,
+        theirExists: !!them,
         mineNote: n.note,
         theirNote: them?.note,
       });
@@ -119,6 +125,8 @@ export function CompareView() {
         pathLabel: theirPaths.get(n.uuid) ?? humanize(n.key),
         mine: "UNSET",
         theirs: n.state,
+        mineExists: false,
+        theirExists: true,
         theirNote: n.note,
       });
     }
@@ -297,36 +305,46 @@ export function CompareView() {
         title={`Conflicts (${conflicts.length})`}
         muted="Where one of you says hard no and the other wants it."
         rows={conflicts}
-        nodeMap={undefined}
+        myId={activeProfileId}
+        theirId={partnerProfile.id}
         onSelect={selectNode}
+        onSetState={setNodeStateFor}
       />
       <Section
         title={`Discuss (${discuss.length})`}
         muted="At least one of you said “unsure / open to discuss”."
         rows={discuss}
-        nodeMap={undefined}
+        myId={activeProfileId}
+        theirId={partnerProfile.id}
         onSelect={selectNode}
+        onSetState={setNodeStateFor}
       />
       <Section
         title={`Wishes (${wishes.length})`}
         muted="One of you would like a change. Worth talking about."
         rows={wishes}
-        nodeMap={undefined}
+        myId={activeProfileId}
+        theirId={partnerProfile.id}
         onSelect={selectNode}
+        onSetState={setNodeStateFor}
       />
       <Section
         title={`Matches (${matches.length})`}
         muted="You both said the same thing."
         rows={matches}
-        nodeMap={undefined}
+        myId={activeProfileId}
+        theirId={partnerProfile.id}
         onSelect={selectNode}
+        onSetState={setNodeStateFor}
       />
       <Section
         title={`One-sided (${oneSided.length})`}
         muted="Only one of you has a rating."
         rows={oneSided}
-        nodeMap={undefined}
+        myId={activeProfileId}
+        theirId={partnerProfile.id}
         onSelect={selectNode}
+        onSetState={setNodeStateFor}
       />
     </div>
   );
@@ -336,13 +354,18 @@ function Section({
   title,
   muted,
   rows,
+  myId,
+  theirId,
   onSelect,
+  onSetState,
 }: {
   title: string;
   muted: string;
   rows: Pair[];
-  nodeMap: undefined;
+  myId: string;
+  theirId: string;
   onSelect: (uuid: string) => void;
+  onSetState: (profileId: string, uuid: string, state: State) => void;
 }) {
   if (rows.length === 0) return null;
   return (
@@ -391,8 +414,18 @@ function Section({
                 </div>
               )}
             </div>
-            <Chip label="You" state={r.mine} />
-            <Chip label="Them" state={r.theirs} />
+            <Chip
+              label="You"
+              state={r.mine}
+              editable={r.mineExists}
+              onChange={(s) => onSetState(myId, r.uuid, s)}
+            />
+            <Chip
+              label="Them"
+              state={r.theirs}
+              editable={r.theirExists}
+              onChange={(s) => onSetState(theirId, r.uuid, s)}
+            />
           </div>
         );
       })}
@@ -400,13 +433,44 @@ function Section({
   );
 }
 
-function Chip({ label, state }: { label: string; state: State }) {
+function Chip({
+  label,
+  state,
+  editable,
+  onChange,
+}: {
+  label: string;
+  state: State;
+  editable: boolean;
+  onChange: (s: State) => void;
+}) {
   return (
-    <span className="chip" title={STATE_LABEL[state]}>
+    <span
+      className={`chip${editable ? " chip-editable" : ""}`}
+      title={editable ? STATE_LABEL[state] : "Not in this person's tree"}
+    >
       <span className="swatch" style={{ background: STATE_COLOR[state] }} />
-      <span>
-        {label}: <strong style={{ color: "var(--text)" }}>{STATE_SHORT[state]}</strong>
-      </span>
+      <span className="chip-label">{label}:</span>
+      {editable ? (
+        <select
+          className="chip-select"
+          value={state}
+          onClick={(e) => e.stopPropagation()}
+          onChange={(e) => {
+            e.stopPropagation();
+            onChange(e.target.value as State);
+          }}
+          aria-label={`Set ${label} rating`}
+        >
+          {ALL_STATES.map((s) => (
+            <option key={s} value={s}>
+              {STATE_SHORT[s]}
+            </option>
+          ))}
+        </select>
+      ) : (
+        <span className="chip-missing">—</span>
+      )}
     </span>
   );
 }

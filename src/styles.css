@@ -917,6 +917,38 @@ button {
   border-radius: 2px;
 }
 
+.compare-row .chip .chip-label {
+  flex: none;
+}
+
+.compare-row .chip .chip-select {
+  background: var(--bg-elev-2);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 2px 4px;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  min-width: 0;
+  max-width: 80px;
+}
+
+.compare-row .chip .chip-select:hover {
+  border-color: var(--accent, #888);
+}
+
+.compare-row .chip .chip-select:focus {
+  outline: 2px solid var(--accent, #888);
+  outline-offset: 1px;
+}
+
+.compare-row .chip .chip-missing {
+  color: var(--text-dim);
+  font-style: italic;
+}
+
 .empty-state {
   color: var(--text-dim);
   text-align: center;

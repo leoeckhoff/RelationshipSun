@@ -40,6 +40,7 @@ interface AppState {
   setView: (v: View) => void;
   selectNode: (uuid: string | null) => void;
   setNodeState: (uuid: string, state: State) => void;
+  setNodeStateFor: (profileId: string, uuid: string, state: State) => void;
   setNodeNote: (uuid: string, note: string) => void;
   addChild: (parentUuid: string, key: string) => void;
   requestDelete: (uuid: string) => void;
@@ -143,9 +144,14 @@ export const useAppStore = create<AppState>((set, get) => ({
   selectNode: (uuid) => set({ selectedUuid: uuid }),
 
   setNodeState: (uuid, state) => {
+    const { activeProfileId } = get();
+    get().setNodeStateFor(activeProfileId, uuid, state);
+  },
+
+  setNodeStateFor: (profileId, uuid, state) => {
     const { profiles, activeProfileId } = get();
     const newProfiles = profiles.map((p) =>
-      p.id !== activeProfileId
+      p.id !== profileId
         ? p
         : {
             ...p,
